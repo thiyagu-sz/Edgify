@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trellis — knowledge workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";}</script>
+<style>
+  :root{
+    --primary:#111111; --primary-active:#242424; --primary-disabled:#e5e7eb;
+    --ink:#111111; --body:#374151; --muted:#6b7280; --muted-soft:#898989;
+    --hairline:#e5e7eb; --hairline-soft:#f3f4f6;
+    --canvas:#ffffff; --surface-soft:#f8f9fa; --surface-card:#f5f5f5; --surface-strong:#e5e7eb;
+    --surface-dark:#101010; --surface-dark-elev:#1a1a1a;
+    --on-primary:#ffffff; --on-dark:#ffffff; --on-dark-soft:#a1a1aa;
+    --accent:#3b82f6; --success:#10b981; --warning:#f59e0b; --error:#ef4444;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px; --pill:9999px;
+    --sp-xs:8px; --sp-sm:12px; --sp-md:16px; --sp-lg:24px; --sp-xl:32px;
+    --sans:'Inter',system-ui,-apple-system,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:var(--sans); color:var(--body); background:var(--canvas); font-size:16px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; display:flex; flex-direction:column; min-height:100vh}
+  a{color:inherit; text-decoration:none}
+  button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit}
+  textarea{font-family:inherit}
+  :focus-visible{outline:2px solid var(--ink); outline-offset:2px; border-radius:var(--r-sm)}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--surface-strong);border-radius:8px;border:3px solid var(--canvas)}
+  ::-webkit-scrollbar-thumb:hover{background:#d1d5db}
+
+  .topbar{height:64px; background:var(--canvas); border-bottom:1px solid var(--hairline);
+    display:flex; align-items:center; gap:var(--sp-lg); padding:0 var(--sp-lg); position:sticky; top:0; z-index:20}
+  .brand{display:flex; align-items:center; gap:9px; flex-shrink:0}
+  .brand .mark{width:22px; height:22px; display:block}
+  .brand .word{font-weight:600; font-size:17px; color:var(--ink); letter-spacing:-0.4px}
+  .nav-spacer{flex:1}
+  .pill-group{display:inline-flex; gap:4px; padding:5px; background:var(--surface-soft);
+    border-radius:var(--pill); border:1px solid var(--hairline-soft)}
+  .pill-group.mini{padding:4px}
+  .seg{padding:7px 15px; border-radius:var(--pill); font-size:14px; font-weight:500; color:var(--muted); background:transparent; transition:color .15s}
+  .pill-group.mini .seg{padding:5px 13px; font-size:13px}
+  .seg[aria-selected="true"]{background:var(--canvas); color:var(--ink); box-shadow:0 1px 2px rgba(17,17,17,.10), 0 0 0 1px rgba(17,17,17,.03)}
+  .ctx{display:flex; align-items:center; gap:8px; padding:6px 10px 6px 12px; border:1px solid var(--hairline);
+    border-radius:var(--r-md); font-size:14px; font-weight:500; color:var(--ink); white-space:nowrap; max-width:240px; overflow:hidden}
+  .ctx b{font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .ctx .sub{color:var(--muted-soft); font-weight:400; flex-shrink:0}
+  .ctx svg{color:var(--muted); flex-shrink:0}
+
+  .btn-primary{background:var(--primary); color:var(--on-primary); font-size:14px; font-weight:600; height:40px;
+    padding:0 18px; border-radius:var(--r-md); display:inline-flex; align-items:center; gap:7px; transition:background .15s}
+  .btn-primary:active{background:var(--primary-active)}
+  .btn-primary:disabled{background:var(--primary-disabled); color:var(--muted-soft); cursor:default}
+  .btn-primary svg{width:16px; height:16px}
+  .btn-secondary{background:var(--canvas); color:var(--ink); font-size:13.5px; font-weight:600; height:40px; padding:0 14px;
+    border:1px solid var(--hairline); border-radius:var(--r-md); display:inline-flex; align-items:center; gap:7px}
+  .btn-secondary:active{background:var(--surface-soft)}
+  .btn-secondary:hover{background:var(--surface-soft)}
+  .btn-secondary svg{width:15px; height:15px}
+
+  main{flex:1; max-width:1240px; width:100%; margin:0 auto; padding:var(--sp-lg)}
+  .feature[hidden]{display:none}
+  .view[hidden]{display:none}
+  .card{background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-xl)}
+  .view-head{margin-bottom:var(--sp-lg)}
+  .view-head h1{font-size:28px; font-weight:600; color:var(--ink); letter-spacing:-0.8px}
+  .view-head p{font-size:14.5px; color:var(--muted); margin-top:6px; max-width:660px}
+
+  /* QUICK NOTES */
+  .qn-grid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:var(--sp-lg); align-items:start}
+  .qn-input{padding:var(--sp-lg)}
+  .qn-label{font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-soft); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .qn-actions{display:flex; gap:14px}
+  .qn-actions .link{font-size:12px; font-weight:500; text-transform:none; letter-spacing:0; color:var(--ink); cursor:pointer; display:inline-flex; align-items:center; gap:5px}
+  .qn-actions .link:hover{color:var(--muted)}
+  .qn-actions .link svg{width:13px; height:13px}
+  .filechip{display:none; align-items:center; gap:8px; padding:8px 12px; margin-bottom:12px; background:var(--surface-soft); border:1px solid var(--hairline); border-radius:var(--r-md); font-size:13px; color:var(--ink)}
+  .filechip.show{display:inline-flex}
+  .filechip svg{width:15px;height:15px;color:var(--muted)}
+  .filechip .x{margin-left:2px; color:var(--muted-soft); cursor:pointer; font-weight:600}
+  textarea.paste{width:100%; min-height:210px; resize:vertical; border:1px solid var(--hairline); border-radius:var(--r-lg);
+    padding:14px 16px; font-size:14.5px; line-height:1.6; color:var(--ink); background:var(--canvas); outline:none; transition:border-color .12s}
+  textarea.paste:focus{border-color:var(--ink)}
+  textarea.paste::placeholder{color:var(--muted-soft)}
+  .char{font-size:12px; color:var(--muted-soft); font-family:var(--mono); text-align:right; margin-top:8px}
+  .fmt-label{font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-soft); margin:22px 0 12px}
+  .format-chips{display:flex; flex-wrap:wrap; gap:8px}
+  .fmt{padding:8px 14px; border-radius:var(--pill); font-size:13.5px; font-weight:500; border:1px solid var(--hairline);
+    background:var(--canvas); color:var(--ink); transition:background .12s, border-color .12s, color .12s}
+  .fmt:hover{background:var(--surface-soft)}
+  .fmt[aria-pressed="true"]{background:var(--surface-dark); color:var(--on-dark); border-color:var(--surface-dark)}
+  .fmt-desc{font-size:13.5px; color:var(--muted); margin-top:14px; line-height:1.5; min-height:20px}
+  .gen-row{margin-top:22px}
+  .gen-row .btn-primary{width:100%; height:44px; justify-content:center; font-size:15px}
+  .gen-hint{font-size:12px; color:var(--muted-soft); text-align:center; margin-top:10px}
+  .gen-hint kbd{font-family:var(--mono); font-size:11px; background:var(--surface-card); padding:1px 6px; border-radius:4px; color:var(--muted)}
+
+  .qn-output{padding:0; min-height:420px; max-height:calc(100vh - 176px); display:flex; flex-direction:column; overflow:hidden}
+  .out-head{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--hairline-soft); gap:12px; flex-wrap:wrap}
+  .out-head .ot{font-size:14px; font-weight:600; color:var(--ink); display:flex; align-items:center; gap:9px}
+  .out-head .ot .badge{font-size:11px; font-weight:500; padding:3px 9px; border-radius:var(--pill); background:var(--surface-card); color:var(--ink)}
+  .out-tools{display:flex; gap:6px; flex-wrap:wrap}
+  .out-tools button{font-size:12.5px; font-weight:600; color:var(--ink); padding:6px 10px; border:1px solid var(--hairline); border-radius:var(--r-md); display:inline-flex; align-items:center; gap:6px}
+  .out-tools button:hover{background:var(--surface-soft)}
+  .out-tools svg{width:13px; height:13px}
+  .out-body{padding:20px 24px; overflow:auto; overscroll-behavior:contain; flex:1}
+
+  .empty, .loading, .errbox{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px; gap:14px}
+  .empty .eglyph{width:44px; height:44px; opacity:.5}
+  .empty h3{font-size:16px; font-weight:600; color:var(--ink); letter-spacing:-0.3px}
+  .empty p{font-size:14px; color:var(--muted); max-width:320px; line-height:1.5}
+  .spin{width:26px; height:26px; border:2.5px solid var(--surface-strong); border-top-color:var(--ink); border-radius:50%; animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .loading p{font-size:14px; color:var(--muted); max-width:320px; line-height:1.5}
+  .errbox svg{width:30px; height:30px; color:var(--error)}
+  .errbox h3{font-size:15px; font-weight:600; color:var(--ink)}
+  .errbox p{font-size:13.5px; color:var(--muted); max-width:340px; line-height:1.5}
+
+  .prose{color:var(--body)}
+  .prose > *:first-child{margin-top:0}
+  .prose h1{font-size:22px; font-weight:600; color:var(--ink); letter-spacing:-0.5px; margin:24px 0 12px; line-height:1.25}
+  .prose h2{font-size:18px; font-weight:600; color:var(--ink); letter-spacing:-0.3px; margin:22px 0 10px}
+  .prose h3{font-size:15.5px; font-weight:600; color:var(--ink); margin:18px 0 8px}
+  .prose p{font-size:15px; line-height:1.65; margin:11px 0}
+  .prose ul, .prose ol{margin:11px 0 11px 22px}
+  .prose li{font-size:15px; line-height:1.6; margin:6px 0}
+  .prose li::marker{color:var(--muted-soft)}
+  .prose strong{color:var(--ink); font-weight:600}
+  .prose code{font-family:var(--mono); font-size:13px; background:var(--surface-card); padding:2px 6px; border-radius:5px; color:var(--ink)}
+  .prose hr{border:none; border-top:1px solid var(--hairline); margin:20px 0}
+  .prose blockquote{border-left:2px solid var(--ink); padding:2px 0 2px 16px; margin:14px 0; color:var(--body)}
+  .prose table{border-collapse:collapse; width:100%; margin:14px 0; font-size:14px}
+  .prose th, .prose td{border:1px solid var(--hairline); padding:8px 12px; text-align:left}
+  .prose th{background:var(--surface-soft); font-weight:600; color:var(--ink)}
+
+  .quiz-q{margin-bottom:22px}
+  .quiz-q:last-child{margin-bottom:0}
+  .qnum{font-size:12px; font-weight:600; color:var(--muted-soft); font-family:var(--mono); margin-bottom:7px}
+  .q-q{font-size:15px; font-weight:600; color:var(--ink); line-height:1.45; margin-bottom:13px}
+  .q-opts{display:flex; flex-direction:column; gap:9px}
+  .q-opt{text-align:left; padding:12px 14px; border:1px solid var(--hairline); border-radius:var(--r-md); font-size:14px;
+    color:var(--ink); background:var(--canvas); display:flex; align-items:center; gap:10px; transition:border-color .12s, background .12s}
+  .q-opt:hover{border-color:var(--surface-strong)}
+  .q-opt .k{width:22px; height:22px; border-radius:var(--r-sm); background:var(--surface-card); display:grid; place-items:center;
+    font-size:12px; font-weight:600; color:var(--muted); flex-shrink:0; font-family:var(--mono)}
+  .q-opt.correct{border-color:var(--success); background:rgba(16,185,129,.06)}
+  .q-opt.correct .k{background:var(--success); color:#fff}
+  .q-opt.wrong{border-color:var(--error); background:rgba(239,68,68,.05)}
+  .q-opt.wrong .k{background:var(--error); color:#fff}
+  .q-opt:disabled{cursor:default}
+  .q-fb{margin-top:11px; font-size:13.5px; line-height:1.5; padding:11px 14px; border-radius:var(--r-md); background:var(--surface-soft); color:var(--body)}
+  .q-fb b{color:var(--ink)}
+  .quiz-score{margin-top:6px; margin-bottom:20px; padding:12px 16px; background:var(--surface-card); border-radius:var(--r-lg);
+    font-size:14px; font-weight:600; color:var(--ink); display:flex; align-items:center; justify-content:space-between}
+  .quiz-score .rs{font-family:var(--mono); font-size:16px}
+
+  /* KNOWLEDGE GRAPH */
+  .gbar{display:flex; align-items:center; justify-content:space-between; gap:var(--sp-md); margin-bottom:var(--sp-lg); flex-wrap:wrap}
+  .legend{display:flex; align-items:center; gap:16px; font-size:13px; color:var(--muted)}
+  .legend span{display:inline-flex; align-items:center; gap:7px}
+  .swatch{width:12px; height:12px; border-radius:4px; border:1px solid var(--hairline)}
+  .swatch.known{background:var(--surface-dark); border-color:var(--surface-dark)}
+  .swatch.learning{background:var(--canvas); border:1.5px solid var(--ink); position:relative}
+  .swatch.learning::after{content:""; position:absolute; width:5px; height:5px; border-radius:50%; background:var(--warning); top:1px; right:1px}
+  .swatch.locked{background:var(--surface-card)}
+  .gbar-right{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .gbar-right .btn-secondary{height:38px}
+
+  .grid{display:grid; grid-template-columns:1fr 400px; gap:var(--sp-lg); align-items:start}
+  .graph-card{padding:6px; overflow:hidden}
+  .graph-head{display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px; gap:12px}
+  .graph-head h2{font-size:15px; font-weight:600; color:var(--ink); letter-spacing:-0.2px}
+  .graph-head .hint{font-size:12.5px; color:var(--muted-soft)}
+  svg.graph{display:block; width:100%; height:auto}
+  .n-locked .box{fill:var(--surface-card); stroke:var(--hairline)}
+  .n-locked .lbl{fill:var(--muted)}
+  .n-learning .box{fill:var(--canvas); stroke:var(--ink); stroke-width:1.5}
+  .n-learning .lbl{fill:var(--ink)}
+  .n-known .box{fill:var(--surface-dark); stroke:var(--surface-dark)}
+  .n-known .lbl{fill:var(--on-dark)}
+  .node-g{cursor:pointer}
+  .node-g .box{transition:stroke .12s}
+  .node-g.sel .box{stroke:var(--ink); stroke-width:2}
+  .node-g.sel .halo{opacity:1}
+  .halo{opacity:0; transition:opacity .15s}
+  .edge{stroke:var(--surface-strong); stroke-width:1.5; fill:none}
+  .edge.hot{stroke:var(--ink); stroke-width:1.75}
+  .prq-dot{fill:var(--warning)}
+
+  .panel{padding:var(--sp-lg); position:sticky; top:88px; max-height:calc(100vh - 108px); overflow-y:auto; overscroll-behavior:contain}
+  .p-top{display:flex; align-items:flex-start; justify-content:space-between; gap:var(--sp-md)}
+  .p-title{font-size:24px; font-weight:600; color:var(--ink); letter-spacing:-0.6px; line-height:1.15}
+  .badge{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:var(--pill); font-size:12px; font-weight:500; background:var(--surface-card); color:var(--ink); white-space:nowrap}
+  .status-line{display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px; color:var(--muted)}
+  .status-pip{width:8px; height:8px; border-radius:50%}
+  .pip-known{background:var(--surface-dark)} .pip-learning{background:var(--warning)} .pip-locked{background:var(--surface-strong)}
+  .ring-wrap{display:flex; align-items:center; gap:16px; margin:var(--sp-lg) 0; padding:var(--sp-md); background:var(--surface-soft); border-radius:var(--r-lg)}
+  .ring{width:104px; height:104px; flex-shrink:0}
+  .ring .track{fill:none; stroke:var(--hairline); stroke-width:9}
+  .ring .prog{fill:none; stroke:var(--ink); stroke-width:9; stroke-linecap:round; transition:stroke-dashoffset .5s ease}
+  .ring .pct{font-size:26px; font-weight:600; fill:var(--ink); letter-spacing:-1px}
+  .ring-info .rl{font-size:13px; font-weight:600; color:var(--ink)}
+  .ring-info .rs{font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.45}
+  .p-section{margin-top:var(--sp-lg)}
+  .p-section h4{font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-soft); margin-bottom:9px}
+  .def{font-size:14.5px; color:var(--body); line-height:1.6}
+  .example{margin-top:12px; padding:12px 14px; background:var(--surface-soft); border-radius:var(--r-md); font-size:13.5px; color:var(--body); border-left:2px solid var(--ink); line-height:1.55}
+  .example b{color:var(--ink); font-weight:600}
+  .chips{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:var(--pill); font-size:13px; font-weight:500;
+    border:1px solid var(--hairline); background:var(--canvas); color:var(--ink); transition:background .12s}
+  .chip:hover{background:var(--surface-soft)}
+  .chip .cpip{width:7px; height:7px; border-radius:50%}
+  .chip.next{background:var(--surface-dark); color:var(--on-dark); border-color:var(--surface-dark)}
+  .chip.next svg{width:13px; height:13px}
+  .p-actions{display:flex; gap:10px; margin-top:var(--sp-lg)}
+  .p-actions .btn-primary, .p-actions .btn-secondary{height:38px; flex:1; justify-content:center; font-size:13.5px}
+  .subpanel[hidden]{display:none}
+  .muted-note{font-size:14px;color:var(--muted);line-height:1.5}
+
+  .flash{perspective:1000px; height:190px; cursor:pointer; margin-bottom:12px}
+  .flash-inner{position:relative; width:100%; height:100%; transition:transform .5s; transform-style:preserve-3d}
+  .flash.flipped .flash-inner{transform:rotateY(180deg)}
+  .flash-face{position:absolute; inset:0; backface-visibility:hidden; border:1px solid var(--hairline); border-radius:var(--r-lg);
+    padding:24px; display:flex; flex-direction:column; justify-content:center; text-align:center; background:var(--canvas)}
+  .flash-face .tag{position:absolute; top:14px; left:16px; font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--muted-soft)}
+  .flash-front .ft{font-size:16px; font-weight:600; color:var(--ink); letter-spacing:-0.3px; line-height:1.35}
+  .flash-back{transform:rotateY(180deg); background:var(--surface-dark)}
+  .flash-back .tag{color:var(--on-dark-soft)}
+  .flash-back .bt{font-size:14px; color:var(--on-dark); line-height:1.5}
+  .flash-hint{text-align:center; font-size:12.5px; color:var(--muted-soft)}
+  .card-nav{display:flex; align-items:center; justify-content:space-between; margin-top:12px}
+  .card-nav button{font-size:13px; font-weight:600; color:var(--ink); padding:8px 12px; border:1px solid var(--hairline); border-radius:var(--r-md)}
+  .card-nav button:disabled{color:var(--muted-soft); border-color:var(--hairline-soft)}
+  .card-count{font-size:12.5px; color:var(--muted); font-family:var(--mono)}
+
+  .concept-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:var(--sp-md)}
+  .cc{background:var(--surface-card); border-radius:var(--r-lg); padding:20px; cursor:pointer; border:1px solid transparent; transition:background .12s}
+  .cc:hover{background:#efefef}
+  .cc-top{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px}
+  .cc-name{font-size:17px; font-weight:600; color:var(--ink); letter-spacing:-0.3px}
+  .cc-r{font-family:var(--mono); font-size:13px; font-weight:500; color:var(--ink); background:var(--canvas); padding:3px 9px; border-radius:var(--pill)}
+  .cc-def{font-size:13.5px; color:var(--muted); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-bottom:14px}
+  .cc-foot{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted)}
+  .bar{height:4px; border-radius:var(--pill); background:var(--surface-strong); flex:1; overflow:hidden}
+  .bar i{display:block; height:100%; background:var(--ink); border-radius:var(--pill)}
+
+  .plan{max-width:760px; margin:0 auto}
+  .plan-hero{display:flex; align-items:center; gap:28px; background:var(--surface-card); border-radius:var(--r-xl); padding:32px; margin-bottom:var(--sp-lg)}
+  .big-ring{width:132px; height:132px; flex-shrink:0}
+  .big-ring .track{fill:none; stroke:var(--surface-strong); stroke-width:10}
+  .big-ring .prog{fill:none; stroke:var(--ink); stroke-width:10; stroke-linecap:round; transition:stroke-dashoffset .5s ease}
+  .big-ring .pct{font-size:32px; font-weight:600; fill:var(--ink); letter-spacing:-1.5px}
+  .plan-hero h1{font-size:26px; font-weight:600; color:var(--ink); letter-spacing:-0.8px}
+  .plan-hero .sub{font-size:14.5px; color:var(--muted); margin-top:8px; line-height:1.5; max-width:400px}
+  .plan-stats{display:flex; gap:24px; margin-top:16px}
+  .plan-stats .v{font-size:20px; font-weight:600; color:var(--ink); letter-spacing:-0.5px}
+  .plan-stats .l{font-size:12.5px; color:var(--muted)}
+  .steps h3{font-size:13px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-soft); margin-bottom:14px}
+  .step{display:flex; align-items:center; gap:16px; padding:16px 18px; background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg); margin-bottom:10px; cursor:pointer; transition:border-color .12s}
+  .step:hover{border-color:var(--surface-strong)}
+  .step-n{width:30px; height:30px; border-radius:50%; background:var(--surface-card); display:grid; place-items:center; font-size:13px; font-weight:600; color:var(--ink); flex-shrink:0; font-family:var(--mono)}
+  .step.done .step-n{background:var(--surface-dark); color:var(--on-dark)}
+  .step-body{flex:1}
+  .step-body .sn{font-size:15.5px; font-weight:600; color:var(--ink); letter-spacing:-0.2px}
+  .step-body .sd{font-size:13px; color:var(--muted); margin-top:2px}
+  .step-time{font-size:13px; color:var(--muted); font-family:var(--mono); white-space:nowrap}
+  .plan-empty{text-align:center; padding:48px; color:var(--muted)}
+  .plan-empty h1{font-size:24px; font-weight:600; color:var(--ink); letter-spacing:-0.5px}
+
+  footer{background:var(--surface-dark); color:var(--on-dark-soft); padding:40px var(--sp-lg) 32px; margin-top:48px}
+  .foot-inner{max-width:1240px; margin:0 auto; display:flex; align-items:flex-start; justify-content:space-between; gap:32px; flex-wrap:wrap}
+  .foot-brand .word{color:var(--on-dark); font-weight:600; font-size:16px; letter-spacing:-0.3px}
+  .foot-brand p{font-size:13px; margin-top:8px; max-width:280px; line-height:1.5}
+  .foot-cols{display:flex; gap:56px; flex-wrap:wrap}
+  .foot-col h5{font-size:12px; font-weight:600; color:var(--on-dark); letter-spacing:.03em; text-transform:uppercase; margin-bottom:12px}
+  .foot-col a{display:block; font-size:13.5px; color:var(--on-dark-soft); margin-bottom:9px; transition:color .12s}
+  .foot-col a:hover{color:var(--on-dark)}
+
+  .overlay{position:fixed; inset:0; background:rgba(17,17,17,.4); z-index:50; display:none; align-items:center; justify-content:center; padding:20px}
+  .overlay.open{display:flex}
+  .modal{background:var(--canvas); border-radius:var(--r-xl); width:100%; max-width:460px; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  .modal h3{font-size:20px; font-weight:600; color:var(--ink); letter-spacing:-0.5px}
+  .modal p.mp{font-size:14px; color:var(--muted); margin-top:6px}
+  .file-row{display:flex; align-items:center; gap:12px; padding:14px; border:1px solid var(--hairline); border-radius:var(--r-md); margin:20px 0}
+  .file-ic{width:36px; height:36px; border-radius:var(--r-sm); background:var(--surface-card); display:grid; place-items:center; color:var(--ink); flex-shrink:0}
+  .file-row .fn{font-size:14px; font-weight:600; color:var(--ink); word-break:break-all} .file-row .fs{font-size:12px; color:var(--muted-soft)}
+  .stage{display:flex; align-items:center; gap:12px; padding:9px 0; font-size:14px; color:var(--muted); opacity:.4; transition:opacity .3s, color .3s}
+  .stage.active, .stage.done{opacity:1; color:var(--ink)}
+  .stage.err{opacity:1; color:var(--error)}
+  .stg-ic{width:22px; height:22px; border-radius:50%; border:1.5px solid var(--surface-strong); display:grid; place-items:center; flex-shrink:0; transition:border-color .3s, background .3s}
+  .stage.active .stg-ic{border-color:var(--ink)}
+  .stage.done .stg-ic{border-color:var(--surface-dark); background:var(--surface-dark)}
+  .stg-ic svg{width:12px; height:12px; color:#fff; opacity:0; transition:opacity .2s}
+  .stage.done .stg-ic svg{opacity:1}
+  .mspin{width:11px; height:11px; border:1.5px solid var(--surface-strong); border-top-color:var(--ink); border-radius:50%; animation:sp .7s linear infinite}
+  .stage:not(.active) .mspin{display:none}
+  .modal-err{font-size:13px;color:var(--error);margin-top:14px;line-height:1.5;display:none}
+  .modal-foot{display:flex; justify-content:flex-end; margin-top:20px; gap:10px}
+  .modal-note{font-size:12.5px; color:var(--muted-soft); text-align:center; margin-top:8px}
+
+  @media (max-width:980px){
+    .qn-grid{grid-template-columns:1fr}
+    .grid{grid-template-columns:1fr}
+    .panel{position:static; max-height:none; overflow:visible}
+    .qn-output{max-height:none}
+    .plan-hero{flex-direction:column; text-align:center; align-items:center}
+    .plan-stats{justify-content:center}
+  }
+  @media (max-width:720px){
+    .topbar{gap:12px; padding:10px 14px; flex-wrap:wrap; height:auto}
+    .ctx, .legend{display:none}
+    .nav-spacer{display:none}
+    .pill-group{order:3; width:100%; justify-content:center}
+    .btn-primary span, .btn-secondary span{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){ *{transition:none !important; animation:none !important} }
+  /* landing-scoped dark colors so the white workspace is unaffected */
+  #landing{ --muted:#a3a3a3; --muted-soft:#737373; --body:#d4d4d4; --accent:#60a5fa; --accent-soft:#93c5fd; --success:#34d399; }
+  /* ============================================================
+     LANDING PAGE (Fluxora)
+     ============================================================ */
+  @keyframes fadeSlideIn{0%{opacity:0;transform:translateY(30px);filter:blur(8px)}100%{opacity:1;transform:translateY(0);filter:blur(0)}}
+  #landing{position:fixed; inset:0; z-index:100; overflow-y:auto; overscroll-behavior:contain; background:#0a0a0a; color:#fff;
+    font-family:var(--sans); -webkit-font-smoothing:antialiased}
+  .lx-grid-bg{position:fixed; inset:0; opacity:.03; pointer-events:none;
+    background-image:linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px); background-size:64px 64px;
+    -webkit-mask-image:linear-gradient(to bottom,#000 0%,#000 70%,transparent 100%); mask-image:linear-gradient(to bottom,#000 0%,#000 70%,transparent 100%)}
+  .lx-glow{position:fixed; pointer-events:none; border-radius:9999px; filter:blur(120px)}
+  .lx-wrap{position:relative; max-width:1200px; margin:0 auto; padding:0 24px; z-index:1}
+  .gborder{position:relative}
+  .gborder::before{content:""; position:absolute; inset:0; border-radius:inherit; padding:1px;
+    -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0); -webkit-mask-composite:xor; mask-composite:exclude;
+    background:linear-gradient(225deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.22) 50%,rgba(255,255,255,0) 100%); pointer-events:none}
+  #landing a{color:inherit; text-decoration:none}
+
+  .lx-nav{display:flex; align-items:center; justify-content:space-between; padding:20px 0}
+  .lx-brand{display:flex; align-items:center; gap:10px; font-weight:600; font-size:18px; letter-spacing:-.4px; color:#fff}
+  .lx-brand svg{width:22px; height:22px}
+  .lx-navlinks{display:flex; gap:32px; font-size:14px; color:var(--muted); font-weight:500}
+  .lx-navlinks a:hover{color:#fff}
+  .lx-navr{display:flex; gap:10px; align-items:center}
+  .lx-btn-primary{background:#fff; color:#0a0a0a; font-weight:600; font-size:14px; padding:10px 18px; border-radius:9999px;
+    display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer; transition:transform .2s}
+  .lx-btn-primary:hover{transform:translateY(-2px)}
+  .lx-btn-primary svg{width:16px;height:16px}
+  .lx-btn-glass{background:rgba(255,255,255,.05); color:rgba(255,255,255,.85); font-weight:500; font-size:14px; padding:10px 18px;
+    border-radius:9999px; backdrop-filter:blur(12px); display:inline-flex; align-items:center; gap:8px; cursor:pointer; transition:transform .2s,color .2s}
+  .lx-btn-glass:hover{transform:translateY(-2px); color:#fff}
+  .lx-btn-glass svg{width:16px;height:16px}
+  .lx-pill{display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border-radius:9999px; background:rgba(255,255,255,.05); font-size:12px; color:var(--muted); font-weight:500}
+  .lx-pill .tag{background:rgba(96,165,250,.2); color:var(--accent-soft); padding:2px 9px; border-radius:9999px; font-weight:500}
+  .lx-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+  .lx-hero{text-align:center; padding:48px 0 20px}
+  .lx-hero > *{animation:fadeSlideIn .8s ease-out both}
+  .lx-hero > *:nth-child(2){animation-delay:.1s} .lx-hero > *:nth-child(3){animation-delay:.2s} .lx-hero > *:nth-child(4){animation-delay:.3s}
+  .lx-h1{font-size:clamp(38px,6.5vw,72px); font-weight:700; letter-spacing:-.045em; line-height:1.03; max-width:900px; margin:0 auto; color:#fff}
+  .lx-sub{font-size:clamp(16px,2vw,19px); color:var(--muted); max-width:660px; margin:22px auto 0; line-height:1.6}
+  .lx-hero-cta{display:flex; gap:12px; justify-content:center; margin-top:32px; flex-wrap:wrap}
+  .lx-blue{color:var(--accent-soft)}
+
+  .lx-bento{display:grid; grid-template-columns:repeat(12,1fr); grid-auto-rows:176px; gap:20px; margin-top:64px}
+  .lx-card{border-radius:24px; background:linear-gradient(225deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.05) 50%,rgba(255,255,255,0) 100%);
+    padding:24px; position:relative; overflow:hidden; display:flex; flex-direction:column;
+    animation:fadeSlideIn .8s ease-out both}
+  .lx-card.accent{background:linear-gradient(225deg,rgba(96,165,250,.14) 0%,rgba(96,165,250,.05) 50%,rgba(96,165,250,.12) 100%)}
+  .col-8{grid-column:span 8} .col-4{grid-column:span 4} .col-6{grid-column:span 6} .col-3{grid-column:span 3}
+  .row-2{grid-row:span 2}
+  .lx-eyebrow{font-size:11px; font-weight:500; letter-spacing:.06em; text-transform:uppercase; color:var(--muted-soft)}
+  .lx-card h3{font-size:20px; font-weight:600; letter-spacing:-.02em; color:#fff; margin-top:auto}
+  .lx-card p{font-size:13.5px; color:var(--muted); line-height:1.5; margin-top:8px}
+  .lx-card .big{font-size:40px; font-weight:700; letter-spacing:-.04em; color:#fff}
+  .lx-mini-pills{display:flex; flex-wrap:wrap; gap:6px; margin-top:auto}
+  .lx-mini-pill{font-size:11.5px; padding:4px 10px; border-radius:9999px; background:rgba(96,165,250,.15); color:var(--accent-soft); font-weight:500}
+  .lx-check{display:flex; align-items:center; gap:9px; font-size:13px; color:var(--body); margin:7px 0}
+  .lx-check svg{width:15px; height:15px; color:var(--accent); flex-shrink:0}
+  .lx-ring-num{font-size:12px; color:var(--muted)}
+  .lx-doc-lines{margin-top:4px}
+  .lx-doc-lines .ln{height:7px; border-radius:4px; background:rgba(255,255,255,.12); margin:8px 0}
+  .lx-tag-blue{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--accent-soft);background:rgba(96,165,250,.15);padding:4px 10px;border-radius:9999px;margin-top:auto;width:fit-content}
+  .lx-tag-blue .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .lx-exp{display:flex;gap:8px;margin-top:auto}
+  .lx-exp span{font-size:12px;font-weight:600;color:#fff;background:rgba(255,255,255,.06);padding:6px 12px;border-radius:8px;display:inline-flex;align-items:center;gap:6px}
+  .lx-exp svg{width:13px;height:13px;color:var(--accent)}
+
+  .lx-section{padding:96px 0}
+  .lx-shead{margin-bottom:40px}
+  .lx-shead .row{display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:500; text-transform:uppercase; letter-spacing:.04em; color:var(--accent)}
+  .lx-shead .line{height:1px; margin-top:12px; background:linear-gradient(to right,transparent,rgba(255,255,255,.2),transparent)}
+  .lx-h2{font-size:clamp(30px,4.5vw,48px); font-weight:600; letter-spacing:-.03em; line-height:1.06; color:#fff; margin-top:20px; max-width:640px}
+  .lx-2col{display:grid; grid-template-columns:1fr 1fr; gap:24px}
+  .lx-mode{border-radius:28px; padding:32px; position:relative;
+    background:linear-gradient(225deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.05) 50%,rgba(255,255,255,0) 100%)}
+  .lx-mode .badge{position:absolute; top:-14px; left:24px; font-size:12px; padding:6px 14px; border-radius:9999px; background:#0a0a0a}
+  .lx-mode.qn .badge{border:1px solid rgba(96,165,250,.3); color:var(--accent-soft)}
+  .lx-mode.kg .badge{border:1px solid rgba(52,211,153,.3); color:var(--success)}
+  .lx-mode h3{font-size:26px; font-weight:600; letter-spacing:-.02em; color:#fff; margin-top:14px}
+  .lx-mode .lead{font-size:14.5px; color:var(--muted); line-height:1.6; margin-top:12px}
+  .lx-mode ul{margin-top:18px; list-style:none}
+  .lx-mode li{display:flex; align-items:flex-start; gap:10px; font-size:14px; color:var(--body); margin:11px 0}
+  .lx-mode li svg{width:16px;height:16px;color:var(--accent);flex-shrink:0;margin-top:2px}
+  .lx-mode.kg li svg{color:var(--success)}
+
+  .lx-steps{display:grid; grid-template-columns:repeat(3,1fr); gap:24px}
+  .lx-step{border-radius:24px; padding:28px; background:linear-gradient(225deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.05) 50%,rgba(255,255,255,0) 100%)}
+  .lx-step .n{width:38px;height:38px;border-radius:9999px;background:rgba(96,165,250,.15);color:var(--accent-soft);display:grid;place-items:center;font-weight:600;font-family:var(--mono);margin-bottom:16px}
+  .lx-step h4{font-size:18px;font-weight:600;color:#fff;letter-spacing:-.01em}
+  .lx-step p{font-size:13.5px;color:var(--muted);line-height:1.55;margin-top:8px}
+
+  .lx-cta{border-radius:28px; padding:56px 40px; text-align:center; position:relative; overflow:hidden;
+    background:linear-gradient(225deg,rgba(96,165,250,.12) 0%,rgba(96,165,250,.04) 50%,rgba(96,165,250,.10) 100%)}
+  .lx-cta h2{font-size:clamp(30px,4.5vw,48px);font-weight:600;letter-spacing:-.03em;color:#fff}
+  .lx-cta p{font-size:16px;color:var(--muted);margin:16px auto 0;max-width:440px;line-height:1.6}
+  .lx-cta .lx-hero-cta{margin-top:28px}
+
+  .lx-foot{border-top:1px solid rgba(255,255,255,.1); margin-top:48px; padding:40px 0; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px}
+  .lx-foot .c{font-size:13px; color:var(--muted-soft)}
+  .lx-foot .lx-navlinks a{font-size:13.5px}
+
+  @media (max-width:900px){
+    .lx-bento{grid-template-columns:1fr; grid-auto-rows:auto}
+    .lx-bento .lx-card{grid-column:auto !important; grid-row:auto !important; min-height:180px}
+    .lx-2col, .lx-steps{grid-template-columns:1fr}
+    .lx-navlinks{display:none}
+    .lx-section{padding:64px 0}
+  }
+  @media (prefers-reduced-motion:reduce){ .lx-hero>*, .lx-card{animation:none !important} }
+
+</style>
+</head>
+<body>
+
+<div id="landing">
+  <div class="lx-grid-bg"></div>
+  <div class="lx-glow" style="width:560px;height:560px;background:rgba(96,165,250,.16);top:-160px;left:50%;transform:translateX(-55%)"></div>
+  <div class="lx-glow" style="width:420px;height:420px;background:rgba(52,211,153,.06);top:640px;right:-120px"></div>
+
+  <div class="lx-wrap">
+    <nav class="lx-nav">
+      <div class="lx-brand">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+          <circle cx="12" cy="5.5" r="2.7" fill="#fff"/><circle cx="5.5" cy="17.5" r="2.7" fill="#fff"/><circle cx="18.5" cy="17.5" r="2.7" fill="#60a5fa"/>
+        </svg>
+        trellis
+      </div>
+      <div class="lx-navlinks">
+        <a href="#lx-features">Features</a><a href="#lx-modes">How it works</a><a href="#lx-start">Get started</a>
+      </div>
+      <div class="lx-navr">
+        <span class="lx-pill"><span class="dot"></span> Live</span>
+        <button class="lx-btn-primary js-launch">Launch app
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </nav>
+
+    <header class="lx-hero">
+      <div class="lx-pill" style="margin-bottom:22px"><span class="tag">New</span> An academic study workspace</div>
+      <h1 class="lx-h1">Cram fast, or <span class="lx-blue">understand deeply.</span> One workspace.</h1>
+      <p class="lx-sub">Trellis turns your notes, slides and PDFs into short, high-yield revision for the night before an exam — and a dependency graph that shows exactly what to learn first.</p>
+      <div class="lx-hero-cta">
+        <button class="lx-btn-primary js-launch">Launch workspace
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <a class="lx-btn-glass" href="#lx-modes">See how it works
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10" stroke="currentColor" stroke-width="1.5" opacity=".5"/><path d="M10 9l5 3-5 3z" fill="currentColor"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <div class="lx-bento" id="lx-features">
+      <div class="lx-card col-8 row-2 gborder" style="animation-delay:.3s">
+        <div class="lx-eyebrow">Dependency graph</div>
+        <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:12px 0">
+          <svg viewBox="0 0 300 150" width="100%" style="max-width:340px" aria-hidden="true">
+            <line x1="45" y1="120" x2="95" y2="78" stroke="rgba(255,255,255,.2)" stroke-width="1.5"/>
+            <line x1="150" y1="120" x2="95" y2="78" stroke="rgba(255,255,255,.2)" stroke-width="1.5"/>
+            <line x1="95" y1="78" x2="70" y2="34" stroke="rgba(255,255,255,.2)" stroke-width="1.5"/>
+            <line x1="150" y1="120" x2="215" y2="78" stroke="rgba(96,165,250,.5)" stroke-width="1.5"/>
+            <line x1="70" y1="34" x2="215" y2="78" stroke="rgba(96,165,250,.5)" stroke-width="1.5"/>
+            <circle cx="45" cy="120" r="9" fill="rgba(255,255,255,.14)" stroke="rgba(255,255,255,.3)"/>
+            <circle cx="150" cy="120" r="9" fill="rgba(255,255,255,.14)" stroke="rgba(255,255,255,.3)"/>
+            <circle cx="95" cy="78" r="9" fill="rgba(255,255,255,.14)" stroke="rgba(255,255,255,.3)"/>
+            <circle cx="70" cy="34" r="9" fill="rgba(255,255,255,.14)" stroke="rgba(255,255,255,.3)"/>
+            <circle cx="215" cy="78" r="12" fill="#60a5fa"/>
+          </svg>
+        </div>
+        <h3>See exactly what to learn first</h3>
+        <p>Upload a document and Trellis maps its concepts and prerequisites into a graph, then scores how ready you are for each one.</p>
+      </div>
+
+      <div class="lx-card col-4 gborder" style="animation-delay:.4s">
+        <div class="lx-eyebrow">Quick notes</div>
+        <div style="margin-top:12px">
+          <div class="lx-check"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Only the testable points</div>
+          <div class="lx-check"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Short and scannable</div>
+          <div class="lx-check"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Ready in seconds</div>
+        </div>
+        <h3>Cram the essentials</h3>
+      </div>
+
+      <div class="lx-card col-4 accent gborder" style="animation-delay:.5s">
+        <div class="lx-eyebrow">Learning readiness</div>
+        <div style="flex:1; display:flex; align-items:center; gap:16px">
+          <svg width="88" height="88" viewBox="0 0 126 126" style="flex-shrink:0">
+            <circle cx="63" cy="63" r="54" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="9"/>
+            <circle cx="63" cy="63" r="54" fill="none" stroke="#60a5fa" stroke-width="9" stroke-linecap="round" stroke-dasharray="339.29" stroke-dashoffset="61.07" transform="rotate(-90 63 63)"/>
+            <text x="63" y="63" text-anchor="middle" dominant-baseline="central" font-size="30" font-weight="700" fill="#fff" font-family="Inter">82%</text>
+          </svg>
+          <div class="lx-ring-num">Prerequisites covered — with the exact gaps left to close.</div>
+        </div>
+      </div>
+
+      <div class="lx-card col-4 gborder" style="animation-delay:.55s">
+        <div class="lx-eyebrow">Revision formats</div>
+        <div class="lx-mini-pills">
+          <span class="lx-mini-pill">Key points</span><span class="lx-mini-pill">Exam points</span><span class="lx-mini-pill">MCQs</span><span class="lx-mini-pill">Summary</span><span class="lx-mini-pill">Formulas</span><span class="lx-mini-pill">Quick test</span>
+        </div>
+        <h3>Nine ways to revise</h3>
+      </div>
+
+      <div class="lx-card col-4 gborder" style="animation-delay:.6s">
+        <div class="lx-eyebrow">Grounded, not guessed</div>
+        <div class="lx-doc-lines"><div class="ln" style="width:100%"></div><div class="ln" style="width:82%"></div><div class="ln" style="width:90%"></div></div>
+        <div class="lx-tag-blue"><span class="dot"></span> Generated from your material</div>
+      </div>
+
+      <div class="lx-card col-4 gborder" style="animation-delay:.65s">
+        <div class="lx-eyebrow">Take it with you</div>
+        <div class="lx-exp">
+          <span><svg viewBox="0 0 24 24" fill="none"><path d="M12 15V4M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> PDF</span>
+          <span><svg viewBox="0 0 24 24" fill="none"><path d="M12 15V4M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> DOC</span>
+        </div>
+        <h3>Export anywhere</h3>
+      </div>
+    </div>
+
+    <section class="lx-section" id="lx-modes">
+      <div class="lx-shead">
+        <div class="row"><span>How it works</span><span>(01)</span></div>
+        <div class="line"></div>
+        <h2 class="lx-h2">Two modes, one workspace</h2>
+      </div>
+      <div class="lx-2col">
+        <div class="lx-mode qn gborder">
+          <span class="badge">QUICK NOTES</span>
+          <h3>Revise fast</h3>
+          <p class="lead">Built for the night before the exam. Paste or upload your material, pick a format, and get short, high-yield notes with only what's likely to be tested.</p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Nine revision formats, including MCQs and a graded quick test</li>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Upload PDF, DOCX, TXT or Markdown</li>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Export to PDF or Word in a click</li>
+          </ul>
+        </div>
+        <div class="lx-mode kg gborder">
+          <span class="badge">KNOWLEDGE GRAPH</span>
+          <h3>Understand deeply</h3>
+          <p class="lead">For real mastery. Trellis reads your document, finds its concepts and the order they build in, and generates deep, source-grounded explanations on demand.</p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> A prerequisite graph built from your own material</li>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Learning readiness, study plans and a concept library</li>
+            <li><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Per-concept explanations, quizzes and flashcards</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="lx-section">
+      <div class="lx-shead">
+        <div class="row"><span>Get going</span><span>(02)</span></div>
+        <div class="line"></div>
+        <h2 class="lx-h2">From file to focused study in three steps</h2>
+      </div>
+      <div class="lx-steps">
+        <div class="lx-step gborder"><div class="n">1</div><h4>Bring your material</h4><p>Upload a lecture PDF, slides or notes — or just paste the text straight in.</p></div>
+        <div class="lx-step gborder"><div class="n">2</div><h4>Pick your mode</h4><p>Quick notes for fast revision, or the knowledge graph for deep understanding.</p></div>
+        <div class="lx-step gborder"><div class="n">3</div><h4>Study &amp; export</h4><p>Revise, test yourself, track readiness, and take a PDF or Word copy with you.</p></div>
+      </div>
+    </section>
+
+    <section class="lx-section" id="lx-start">
+      <div class="lx-cta gborder">
+        <div class="lx-glow" style="width:300px;height:300px;background:rgba(96,165,250,.25);top:-60px;left:50%;transform:translateX(-50%)"></div>
+        <h2>Start studying smarter</h2>
+        <p>Two ways to learn, grounded in your own material. Jump straight into the workspace — no setup.</p>
+        <div class="lx-hero-cta">
+          <button class="lx-btn-primary js-launch">Launch workspace
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="lx-foot">
+      <div class="lx-brand" style="font-size:16px">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="5.5" r="2.7" fill="#fff"/><circle cx="5.5" cy="17.5" r="2.7" fill="#fff"/><circle cx="18.5" cy="17.5" r="2.7" fill="#60a5fa"/></svg>
+        trellis
+      </div>
+      <div class="lx-navlinks"><a href="#lx-features">Features</a><a href="#lx-modes">How it works</a><a class="js-launch" href="#" style="color:#fff">Launch app</a></div>
+      <div class="c">A study-workspace prototype · dark theme</div>
+    </footer>
+  </div>
+</div>
+
+<header class="topbar" id="appHeader">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#111" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#111" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#111" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="12" cy="5.5" r="2.7" fill="#111"/><circle cx="5.5" cy="17.5" r="2.7" fill="#111"/><circle cx="18.5" cy="17.5" r="2.7" fill="#111"/>
+    </svg>
+    <span class="word">trellis</span>
+  </div>
+  <div class="nav-spacer"></div>
+  <div class="pill-group" role="tablist" id="modeNav">
+    <button class="seg" role="tab" aria-selected="true" data-mode="notes">Quick notes</button>
+    <button class="seg" role="tab" aria-selected="false" data-mode="graph">Knowledge graph</button>
+  </div>
+  <div class="nav-spacer"></div>
+  <div class="ctx" id="ctxSwitch" hidden><b id="ctxName">Machine learning</b> <span class="sub">· collection</span></div>
+</header>
+
+<input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md,text/plain" hidden>
+
+<main>
+  <!-- QUICK NOTES -->
+  <section class="feature" id="feature-notes">
+    <div class="view-head">
+      <h1>Quick notes</h1>
+      <p>Built for the night before the exam. Paste or upload your material and get short, high-yield notes — only the points most likely to be tested, nothing padded.</p>
+    </div>
+    <div class="qn-grid">
+      <div class="card qn-input">
+        <div class="qn-label">Source material
+          <div class="qn-actions">
+            <span class="link" id="nUploadBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-5 5M12 4l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17v2a1 1 0 001 1h12a1 1 0 001-1v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Upload file</span>
+            <span class="link" id="sampleBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M14 3v5h5M6 3h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg> Load sample</span>
+          </div>
+        </div>
+        <div class="filechip" id="nFileChip"><svg viewBox="0 0 24 24" fill="none"><path d="M14 3v5h5M6 3h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg><span id="nFileName"></span><span class="x" id="nFileClear">✕</span></div>
+        <textarea class="paste" id="pasteBox" placeholder="Paste your notes, a textbook section, or an article — or upload a PDF, DOCX, TXT or MD file above…"></textarea>
+        <div class="char" id="charCount">0 characters</div>
+        <div class="fmt-label">Revision format</div>
+        <div class="format-chips" id="formatChips"></div>
+        <div class="fmt-desc" id="fmtDesc"></div>
+        <div class="gen-row">
+          <button class="btn-primary" id="genBtn">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Generate revision notes
+          </button>
+          <div class="gen-hint">or press <kbd>⌘ Enter</kbd></div>
+        </div>
+      </div>
+      <div class="card qn-output" id="qnOutput">
+        <div class="empty" id="qnEmpty">
+          <svg class="eglyph" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#111" stroke-width="1.4" stroke-linecap="round"/>
+            <line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#111" stroke-width="1.4" stroke-linecap="round"/>
+            <line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#111" stroke-width="1.4" stroke-linecap="round"/>
+            <circle cx="12" cy="5.5" r="2.4" fill="#111"/><circle cx="5.5" cy="17.5" r="2.4" fill="#111"/><circle cx="18.5" cy="17.5" r="2.4" fill="#111"/>
+          </svg>
+          <h3>Your revision notes will appear here</h3>
+          <p>Paste or upload material and choose a format to generate.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KNOWLEDGE GRAPH -->
+  <section class="feature" id="feature-graph" hidden>
+    <div class="gbar">
+      <div class="pill-group mini" role="tablist" id="viewNav">
+        <button class="seg" role="tab" aria-selected="true" data-view="graph">Graph</button>
+        <button class="seg" role="tab" aria-selected="false" data-view="concepts">Concepts</button>
+        <button class="seg" role="tab" aria-selected="false" data-view="plan">Study plan</button>
+      </div>
+      <div class="gbar-right">
+        <div class="legend">
+          <span><span class="swatch known"></span> Mastered</span>
+          <span><span class="swatch learning"></span> In progress</span>
+          <span><span class="swatch locked"></span> Not started</span>
+        </div>
+        <button class="btn-secondary" id="gExportPdf"><svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 16l-4-4M12 16l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 20h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>PDF</span></button>
+        <button class="btn-secondary" id="gExportDoc"><svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 16l-4-4M12 16l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 20h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>DOC</span></button>
+        <button class="btn-secondary" id="uploadBtn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-5 5M12 4l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Upload document</span>
+        </button>
+      </div>
+    </div>
+
+    <section class="view" id="view-graph">
+      <div class="grid">
+        <div class="card graph-card">
+          <div class="graph-head">
+            <h2 id="graphHeadTitle">Dependency graph</h2>
+            <span class="hint">Click a concept for a deep, document-grounded explanation</span>
+          </div>
+          <svg class="graph" id="graph" viewBox="0 0 760 590" role="img" aria-label="Concept dependency graph">
+            <defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M2 1.5L8 5L2 8.5" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+            <g id="edges"></g><g id="nodes"></g>
+          </svg>
+        </div>
+        <aside class="card panel" id="panel"></aside>
+      </div>
+    </section>
+
+    <section class="view" id="view-concepts" hidden>
+      <div class="view-head"><h1>Concept library</h1><p>Every concept extracted from your material, ranked by how ready you are to study it in depth.</p></div>
+      <div class="concept-grid" id="conceptGrid"></div>
+    </section>
+
+    <section class="view" id="view-plan" hidden>
+      <div class="plan" id="planWrap"></div>
+    </section>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand"><span class="word">trellis</span>
+      <p>Two ways to study: quick high-yield notes for exam revision, and a dependency graph for deep understanding of what you upload.</p></div>
+    <div class="foot-cols">
+      <div class="foot-col"><h5>Quick notes</h5><a href="#">Key points</a><a href="#">Exam points</a><a href="#">MCQs &amp; quizzes</a><a href="#">Export</a></div>
+      <div class="foot-col"><h5>Knowledge graph</h5><a href="#">Dependency graph</a><a href="#">Concept library</a><a href="#">Study plans</a></div>
+      <div class="foot-col"><h5>About</h5><a href="#">How it works</a><a href="#">Method</a><a href="#">Privacy</a></div>
+    </div>
+  </div>
+</footer>
+
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Build knowledge graph">
+    <h3>Build a knowledge graph</h3>
+    <p class="mp">Trellis reads your document, finds its key concepts, and maps how they depend on each other for deep study.</p>
+    <div class="file-row">
+      <div class="file-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M6 3h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></div>
+      <div><div class="fn" id="mFileName">document</div><div class="fs" id="mFileSize"></div></div>
+    </div>
+    <div id="stages">
+      <div class="stage" data-s="0"><div class="stg-ic"><div class="mspin"></div><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>Reading your document</div>
+      <div class="stage" data-s="1"><div class="stg-ic"><div class="mspin"></div><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>Finding key concepts &amp; prerequisites</div>
+      <div class="stage" data-s="2"><div class="stg-ic"><div class="mspin"></div><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>Building the dependency graph</div>
+    </div>
+    <div class="modal-err" id="modalErr"></div>
+    <div class="modal-foot"><button class="btn-secondary" id="modalClose" style="display:none">Close</button></div>
+    <div class="modal-note">Runs live on your document. PDF/DOCX/TXT/MD supported.</div>
+  </div>
+</div>
+
+<script>
+/* ===== Anthropic API (live generation) ===== */
+async function callClaude(system, userText){
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:1000, system, messages:[{role:"user", content:userText}] })
+  });
+  if(!res.ok) throw new Error("Model request failed ("+res.status+")");
+  const data = await res.json();
+  const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+  if(!text) throw new Error("Empty response");
+  return text;
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function parseJSON(raw){
+  let s=raw.trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+  try{ return JSON.parse(s); }catch(e){ const m=s.match(/\{[\s\S]*\}/); if(m){ try{ return JSON.parse(m[0]); }catch(e2){} } }
+  return null;
+}
+function slug(s){ return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,44)||"trellis"; }
+
+/* ===== File text extraction ===== */
+async function extractText(file){
+  const name=(file.name||"").toLowerCase();
+  if(name.endsWith(".txt")||name.endsWith(".md")||(file.type||"").startsWith("text/")){ return (await file.text()).trim(); }
+  if(name.endsWith(".pdf")){
+    if(!window.pdfjsLib) throw new Error("The PDF reader didn't load. Paste the text instead.");
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    let out="";
+    for(let p=1;p<=pdf.numPages;p++){ const page=await pdf.getPage(p); const tc=await page.getTextContent(); out+=tc.items.map(i=>i.str).join(" ")+"\n"; }
+    return out.trim();
+  }
+  if(name.endsWith(".docx")){
+    if(!window.mammoth) throw new Error("The DOCX reader didn't load. Paste the text instead.");
+    const buf=await file.arrayBuffer();
+    const res=await mammoth.extractRawText({arrayBuffer:buf});
+    return (res.value||"").trim();
+  }
+  throw new Error("Unsupported file. Use PDF, DOCX, TXT or MD.");
+}
+
+/* ===== Export (PDF via jsPDF, DOC via Word-HTML) ===== */
+function downloadBlob(blob, filename){
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 600);
+}
+function exportDoc(title, markdown){
+  const body = window.marked ? marked.parse(markdown) : "<pre>"+escapeHtml(markdown)+"</pre>";
+  const html = "<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#111;line-height:1.5} h1{font-size:19pt;margin:0 0 10pt} h2{font-size:14pt;margin:16pt 0 6pt} h3{font-size:12pt;margin:12pt 0 5pt} ul,ol{margin:6pt 0 6pt 18pt} li{margin:3pt 0} p{margin:6pt 0}</style></head><body><h1>"+escapeHtml(title)+"</h1>"+body+"</body></html>";
+  downloadBlob(new Blob([html], {type:"application/msword"}), slug(title)+".doc");
+}
+function exportPdf(title, markdown){
+  if(!window.jspdf || !window.jspdf.jsPDF){ alert("PDF export isn't available here — try DOC (it opens in Word)."); return; }
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:"pt", format:"a4"});
+  const M=48, PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), W=PW-M*2;
+  let y=M;
+  function put(text, size, style, indent, gap){
+    doc.setFont("helvetica", style); doc.setFontSize(size);
+    const lines=doc.splitTextToSize(text, W-indent);
+    lines.forEach(l=>{ if(y>PH-M){ doc.addPage(); y=M; } doc.text(l, M+indent, y); y+=size+3; });
+    y+=gap;
+  }
+  put(title, 18, "bold", 0, 12);
+  markdown.split("\n").forEach(raw=>{
+    const t=raw.replace(/\s+$/,"");
+    if(!t.trim()){ y+=4; return; }
+    const clean = t.replace(/\*\*/g,"").replace(/^\s*[-*]\s+/,"").replace(/^\s*\d+\.\s+/,"").replace(/_/g,"");
+    if(t.startsWith("### ")) put(t.slice(4).replace(/\*\*/g,""),12.5,"bold",0,4);
+    else if(t.startsWith("## ")) put(t.slice(3).replace(/\*\*/g,""),14.5,"bold",0,5);
+    else if(t.startsWith("# ")) put(t.slice(2).replace(/\*\*/g,""),16,"bold",0,6);
+    else if(/^\s*[-*]\s+/.test(t)) put("•  "+clean,11,"normal",16,2);
+    else if(/^\s*\d+\.\s+/.test(t)) put(clean,11,"normal",16,2);
+    else put(clean,11,"normal",0,4);
+  });
+  doc.save(slug(title)+".pdf");
+}
+
+/* ============================================================
+   QUICK NOTES  — short, high-yield, exam revision
+   ============================================================ */
+const SYSTEM_NOTES = "You are Trellis Quick Notes, built for fast revision the night before an exam. Turn the source material into SHORT, high-yield notes containing ONLY the most important, most testable points. Be concise and scannable: prefer tight bullet points, keep each point to a clause or one short sentence, and cut everything non-essential. Never pad or repeat. Output ONLY the requested material with no preamble and no closing remarks. Use clean Markdown.";
+const FORMATS = [
+  {id:"key_points", label:"Key Points", desc:"The 6–10 most important, most testable points.", mode:"md",
+   instr:"List the 6–10 most important, most testable points from the material as a tight bulleted list, grouped under a few short bold subheadings if helpful. One clause each. No filler."},
+  {id:"main_concepts", label:"Main Concepts", desc:"The core concepts, each in one line.", mode:"md",
+   instr:"List the core concepts. Give each concept name in bold followed by a one-line definition (a single clause). Foundational concepts first. Keep it short."},
+  {id:"exam_points", label:"Exam Points", desc:"High-yield facts + the questions likely to be asked.", mode:"md",
+   instr:"Give the highest-yield facts to memorise as a short bullet list, then a '## Likely questions' section with 3–4 probable exam questions and a one-line answer each. Keep everything brief and testable."},
+  {id:"short_notes", label:"Short Notes", desc:"The whole topic condensed to the essentials.", mode:"md",
+   instr:"Condense the whole material into short revision notes — the essentials only, scannable, revisable in a couple of minutes. Short headings and tight bullets."},
+  {id:"formulas_terms", label:"Formulas & Terms", desc:"Key formulas, definitions and terms to memorise.", mode:"md",
+   instr:"Extract the key formulas, definitions, and technical terms worth memorising. Present as a compact list: term or formula in bold, then a one-line meaning. Include only what appears in or directly follows from the material."},
+  {id:"summary", label:"Summary", desc:"A tight 1–2 paragraph recap.", mode:"md",
+   instr:"Write a tight summary of the material in 1–2 short paragraphs capturing only the main idea and key supporting points. No bullet lists."},
+  {id:"mcqs", label:"MCQs", desc:"Quick multiple-choice self-test, graded live.", mode:"quiz",
+   instr:"Write 5 exam-style multiple-choice questions on the most testable points. Each has exactly 4 short options, one correct, plus a one-line explanation."},
+  {id:"quick_test", label:"Quick Test", desc:"A fast 4-question quiz, graded as you go.", mode:"quiz",
+   instr:"Write a fast 4-question self-test on the key points. Each question has 4 short options, one correct, and a one-line explanation."},
+];
+const JSON_SCHEMA = ' Respond with ONLY valid minified JSON and nothing else — no markdown, no code fences, no commentary. Schema: {"questions":[{"q":"string","options":["string","string","string","string"],"answer":0,"explanation":"string"}]}';
+const SAMPLE = "Neural networks learn by adjusting the strengths of connections between artificial neurons until their outputs match the desired targets. A network is organised into layers: an input layer receives the data, one or more hidden layers transform it, and an output layer produces the prediction. Each connection carries a weight, and each neuron computes a weighted sum of its inputs followed by a nonlinear activation function, which allows the network to represent complex, nonlinear relationships.\n\nTraining relies on a loss function that measures how far the network's predictions fall from the correct answers, and the goal is to minimise this loss. The backpropagation algorithm computes how much each weight contributed to the error by applying the chain rule of calculus, propagating gradients backward from the output layer to the input layer. An optimiser such as gradient descent then updates every weight a small step in the direction that reduces the loss.\n\nRepeating this process over many examples gradually improves the network's accuracy. The learning rate controls the size of each update: too large and training becomes unstable, too small and it converges slowly.";
+
+let qnFormat="key_points", lastRaw="", lastExport={title:"Notes", md:""};
+const pasteBox=document.getElementById("pasteBox"), charCount=document.getElementById("charCount"),
+  fmtDesc=document.getElementById("fmtDesc"), genBtn=document.getElementById("genBtn"), qnOutput=document.getElementById("qnOutput");
+
+function renderFormatChips(){
+  const wrap=document.getElementById("formatChips");
+  wrap.innerHTML=FORMATS.map(f=>`<button class="fmt" data-f="${f.id}" aria-pressed="${f.id===qnFormat}">${f.label}</button>`).join("");
+  wrap.querySelectorAll(".fmt").forEach(b=>b.addEventListener("click",()=>{
+    qnFormat=b.dataset.f;
+    wrap.querySelectorAll(".fmt").forEach(x=>x.setAttribute("aria-pressed", x.dataset.f===qnFormat));
+    fmtDesc.textContent=FORMATS.find(f=>f.id===qnFormat).desc;
+  }));
+  fmtDesc.textContent=FORMATS.find(f=>f.id===qnFormat).desc;
+}
+function setChars(){ charCount.textContent=pasteBox.value.length.toLocaleString()+" characters"; }
+pasteBox.addEventListener("input", setChars);
+document.getElementById("sampleBtn").addEventListener("click",()=>{ pasteBox.value=SAMPLE; setChars(); clearNoteFile(); pasteBox.focus(); });
+pasteBox.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){ e.preventDefault(); generate(); }});
+genBtn.addEventListener("click", generate);
+
+/* Quick notes upload */
+const fileInput=document.getElementById("fileInput");
+let uploadTarget="notes";
+function clearNoteFile(){ document.getElementById("nFileChip").classList.remove("show"); }
+document.getElementById("nUploadBtn").addEventListener("click",()=>{ uploadTarget="notes"; fileInput.value=""; fileInput.click(); });
+document.getElementById("nFileClear").addEventListener("click",()=>{ clearNoteFile(); pasteBox.value=""; setChars(); });
+
+async function handleNotesFile(file){
+  const chip=document.getElementById("nFileChip");
+  document.getElementById("nFileName").textContent="Reading "+file.name+"…";
+  chip.classList.add("show");
+  try{
+    const text=await extractText(file);
+    if(!text || text.length<20) throw new Error("No readable text found in that file.");
+    pasteBox.value=text; setChars();
+    document.getElementById("nFileName").textContent=file.name+" · "+text.length.toLocaleString()+" chars";
+  }catch(err){
+    clearNoteFile();
+    errorState(err.message+" You can paste the text directly instead.");
+  }
+}
+
+function setOutput(html){ qnOutput.innerHTML=html; }
+function loadingState(msg){ setOutput(`<div class="loading"><div class="spin"></div><p>${msg}</p></div>`); }
+function errorState(msg){
+  setOutput(`<div class="errbox"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M12 8v5M12 16.5v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <h3>Couldn't generate the notes</h3><p>${msg}</p><button class="btn-secondary" id="retryBtn"><span>Try again</span></button></div>`);
+  const r=document.getElementById("retryBtn"); if(r) r.addEventListener("click", generate);
+}
+function outputHeader(fmt){
+  return `<div class="out-head"><div class="ot">${fmt.label} <span class="badge">from ${pasteBox.value.length.toLocaleString()} chars</span></div>
+    <div class="out-tools">
+      ${fmt.mode==="md"?`<button id="copyBtn"><svg viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" stroke-width="2"/></svg>Copy</button>`:``}
+      <button id="pdfBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 15V4M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>PDF</button>
+      <button id="docBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 15V4M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>DOC</button>
+      <button id="regenBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 0113.5-5.7L20 8M20 12a8 8 0 01-13.5 5.7L4 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Regenerate</button>
+    </div></div>`;
+}
+function wireOutputTools(fmt){
+  const cp=document.getElementById("copyBtn");
+  if(cp) cp.addEventListener("click",()=>navigator.clipboard.writeText(lastRaw).then(()=>{ cp.innerHTML="<svg viewBox='0 0 24 24' fill='none'><path d='M5 13l4 4L19 7' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/></svg>Copied"; }));
+  const pb=document.getElementById("pdfBtn"); if(pb) pb.addEventListener("click",()=>exportPdf(lastExport.title, lastExport.md));
+  const db=document.getElementById("docBtn"); if(db) db.addEventListener("click",()=>exportDoc(lastExport.title, lastExport.md));
+  const rg=document.getElementById("regenBtn"); if(rg) rg.addEventListener("click", generate);
+}
+function quizToMarkdown(label, qs){
+  let md="## "+label+"\n\n";
+  qs.forEach((q,i)=>{ md+="**Q"+(i+1)+". "+q.q+"**\n\n"; (q.options||[]).forEach((o,oi)=>{ md+="- "+String.fromCharCode(65+oi)+". "+o+(oi===q.answer?"  (correct)":"")+"\n"; }); md+="\n_Answer: "+String.fromCharCode(65+q.answer)+" — "+(q.explanation||"")+"_\n\n"; });
+  return md;
+}
+
+async function generate(){
+  const content=pasteBox.value.trim(), fmt=FORMATS.find(f=>f.id===qnFormat);
+  if(content.length<40){ errorState("Add at least a few sentences of source material first (paste or upload)."); return; }
+  genBtn.disabled=true; loadingState("Generating "+fmt.label.toLowerCase()+"…");
+  const clipped=content.length>12000?content.slice(0,12000)+"\n\n[content truncated]":content;
+  let userText=fmt.instr+(fmt.mode==="quiz"?JSON_SCHEMA:"");
+  userText+="\n\nSOURCE MATERIAL:\n\"\"\"\n"+clipped+"\n\"\"\"";
+  try{
+    const raw=await callClaude(SYSTEM_NOTES, userText); lastRaw=raw;
+    if(fmt.mode==="quiz"){ renderQuizOutput(fmt, raw); }
+    else{
+      lastExport={title:"Trellis — "+fmt.label, md:raw};
+      const html=window.marked?marked.parse(raw):("<pre style='white-space:pre-wrap'>"+escapeHtml(raw)+"</pre>");
+      setOutput(outputHeader(fmt)+`<div class="out-body"><div class="prose">${html}</div></div>`);
+      wireOutputTools(fmt);
+    }
+  }catch(err){ errorState(err.message+". This live demo needs the Claude connection — check your network and retry."); }
+  finally{ genBtn.disabled=false; }
+}
+function renderQuizOutput(fmt, raw){
+  const data=parseJSON(raw);
+  if(!data||!Array.isArray(data.questions)||!data.questions.length){ errorState("The quiz came back in an unexpected format. Try regenerating."); return; }
+  const qs=data.questions; lastExport={title:"Trellis — "+fmt.label, md:quizToMarkdown(fmt.label, qs)};
+  let body=`<div class="quiz-score" id="quizScore"><span>Quiz progress</span><span class="rs" id="scoreVal">0 / ${qs.length}</span></div>`;
+  qs.forEach((q,qi)=>{
+    body+=`<div class="quiz-q" data-qi="${qi}" data-ans="${q.answer}"><div class="qnum">Question ${qi+1}</div><div class="q-q">${escapeHtml(q.q)}</div><div class="q-opts">`;
+    (q.options||[]).forEach((opt,oi)=>{ body+=`<button class="q-opt" data-oi="${oi}"><span class="k">${String.fromCharCode(65+oi)}</span>${escapeHtml(opt)}</button>`; });
+    body+=`</div><div class="q-fb" data-fb hidden></div></div>`;
+  });
+  setOutput(outputHeader(fmt)+`<div class="out-body">${body}</div>`); wireOutputTools(fmt);
+  let answered=0, correct=0;
+  qnOutput.querySelectorAll(".quiz-q").forEach(qEl=>{
+    const ans=+qEl.dataset.ans, q=qs[+qEl.dataset.qi];
+    qEl.querySelectorAll(".q-opt").forEach(opt=>opt.addEventListener("click",()=>{
+      if(qEl.dataset.done) return; qEl.dataset.done="1"; const oi=+opt.dataset.oi;
+      qEl.querySelectorAll(".q-opt").forEach(o=>o.disabled=true);
+      const fb=qEl.querySelector("[data-fb]"); fb.hidden=false;
+      if(oi===ans){ opt.classList.add("correct"); correct++; fb.innerHTML=`<b>Correct.</b> ${escapeHtml(q.explanation||"")}`; }
+      else{ opt.classList.add("wrong"); qEl.querySelector(`.q-opt[data-oi="${ans}"]`).classList.add("correct"); fb.innerHTML=`<b>Not quite.</b> ${escapeHtml(q.explanation||"")}`; }
+      answered++; document.getElementById("scoreVal").textContent=`${correct} / ${qs.length}`;
+      if(answered===qs.length) document.querySelector("#quizScore span").textContent="Final score";
+    }));
+  });
+}
+
+/* ============================================================
+   KNOWLEDGE GRAPH — deep understanding, built from the document
+   ============================================================ */
+const CURATED = {
+  calc:{name:"Calculus", x:24, y:520, diff:"Foundational", pre:[], rel:["linalg","opt"], min:180,
+    def:"The study of continuous change through derivatives and integrals. In machine learning it supplies the gradients that tell an optimiser how each parameter affects the loss, making it the mathematical foundation of all gradient-based training.",
+    ex:["The derivative of the loss with respect to a weight", " tells you which direction — and how sharply — to nudge that weight to reduce error."],
+    quiz:{q:"In training a model, the derivative of the loss with respect to a parameter tells you…", o:["The final value of the parameter","How changing the parameter changes the loss","The number of layers in the model","The size of the dataset"], a:1, e:"A derivative is a sensitivity: it measures how a small change in the parameter changes the loss — exactly what gradient descent needs."},
+    cards:[{f:"What is a partial derivative?",b:"The rate of change of a multivariable function with respect to one variable, holding the others fixed — the building block of a gradient."},{f:"Why does deep learning need calculus?",b:"Training minimises a loss by following its gradient, and gradients are derivatives, so every weight update is an application of calculus."}]},
+  linalg:{name:"Linear algebra", x:310, y:520, diff:"Foundational", pre:[], rel:["calc","nn"], min:200,
+    def:"The mathematics of vectors, matrices, and the linear transformations between them. Every layer of a neural network is fundamentally a matrix multiplication, so linear algebra is the language in which models represent and transform data.",
+    ex:["Multiplying an input vector by a weight matrix", " projects the data into a new feature space — a single dense layer expressed in one operation."],
+    quiz:{q:"Applying a weight matrix to an input vector performs a…", o:["Sorting operation","Linear transformation of the input","Random permutation","Probability normalisation"], a:1, e:"A matrix defines a linear map; multiplying a vector by it transforms that vector into a new space — the core computation of a dense layer."},
+    cards:[{f:"What does the dot product measure?",b:"How aligned two vectors are; it underlies similarity, projections, and every neuron's weighted sum."},{f:"Why represent a layer as a matrix?",b:"It lets the whole layer's weighted sums be computed in one efficient, parallel matrix multiply."}]},
+  prob:{name:"Probability", x:596, y:520, diff:"Foundational", pre:[], rel:["attn"], min:160,
+    def:"The framework for quantifying uncertainty using distributions, expectation, and likelihood. It underpins loss functions such as cross-entropy, the softmax that turns scores into class probabilities, and the way a model expresses confidence.",
+    ex:["The softmax function", " converts a vector of raw scores (logits) into a valid probability distribution over classes that sums to one."],
+    quiz:{q:"The outputs of a softmax layer are guaranteed to…", o:["Sum to one and be non-negative","Be whole numbers","Include negative values","Be unbounded above"], a:0, e:"Softmax exponentiates and normalises the logits, producing a proper probability distribution: each value lies in (0,1) and they sum to 1."},
+    cards:[{f:"What is cross-entropy loss?",b:"A measure of the distance between the predicted probability distribution and the true labels; minimising it makes predictions match the targets."},{f:"What does 'expectation' mean?",b:"The long-run average of a random variable, weighting each outcome by its probability."}]},
+  opt:{name:"Optimization", x:90, y:426, diff:"Intermediate", pre:["calc","linalg"], rel:["gd"], min:150,
+    def:"The problem of finding parameter values that minimise a loss function. Training a model is an optimisation problem, and understanding its landscape — minima, saddle points, and curvature — explains why methods like gradient descent behave as they do.",
+    ex:["Minimising a convex loss surface", " is like rolling a ball to the bottom of a smooth bowl; deep-network losses are bumpier, with many local minima."],
+    quiz:{q:"During training, the optimiser's objective is to…", o:["Maximise the loss","Minimise the loss function","Hold the loss constant","Maximise the parameter count"], a:1, e:"Training minimises a loss that quantifies prediction error; the optimiser searches parameter space for values that make it as small as possible."},
+    cards:[{f:"Convex vs non-convex optimisation?",b:"Convex problems have a single global minimum and are easy to solve; deep-net losses are non-convex, with many minima and saddle points."},{f:"What is a saddle point?",b:"A point that is a minimum along some directions and a maximum along others; it can stall training by flattening the gradient."}]},
+  gd:{name:"Gradient descent", x:90, y:332, diff:"Intermediate", pre:["opt","calc"], rel:["bp"], min:120,
+    def:"An iterative optimisation algorithm that repeatedly steps parameters in the direction of the negative gradient to reduce the loss. Its variants — stochastic, mini-batch, and momentum-based — are the workhorses that actually train modern neural networks.",
+    ex:["A learning rate that is too large", " makes each step overshoot the minimum, so the loss oscillates or diverges instead of settling."],
+    quiz:{q:"Gradient descent updates each parameter by moving it in the direction of the…", o:["Positive gradient","Negative gradient","Largest weight","Random noise"], a:1, e:"The gradient points uphill toward increasing loss, so descent steps in the opposite (negative) direction to decrease it."},
+    cards:[{f:"What is the learning rate?",b:"The step size of each update; too high overshoots and diverges, too low trains slowly and can get stuck."},{f:"Why 'stochastic' gradient descent?",b:"It estimates the gradient from a small random mini-batch each step, trading exactness for far faster, noisier updates."}]},
+  bp:{name:"Backpropagation", x:180, y:238, diff:"Advanced", pre:["gd","linalg"], rel:["nn"], min:140,
+    def:"The algorithm that computes the gradient of the loss with respect to every weight by applying the chain rule backward through the network, layer by layer. It makes training deep networks tractable by reusing intermediate results instead of recomputing gradients from scratch.",
+    ex:["Error signals", " originate at the output layer and flow backward; each layer multiplies them by its local derivatives to update its own weights."],
+    quiz:{q:"Backpropagation is essentially an efficient application of the…", o:["Chain rule of calculus, applied backward","Matrix inverse","Softmax function","Random search over weights"], a:0, e:"Backprop applies the chain rule from output to input, reusing each layer's cached values so the full gradient is computed in a single backward pass."},
+    cards:[{f:"What does backprop actually compute?",b:"The partial derivative of the loss with respect to every weight and bias in the network."},{f:"Forward pass vs backward pass?",b:"The forward pass computes the prediction and loss; the backward pass propagates gradients back to update the weights."}]},
+  nn:{name:"Neural networks", x:310, y:144, diff:"Advanced", pre:["linalg","bp"], rel:["cnn","rnn","attn"], min:160,
+    def:"Models built from layers of weighted sums followed by nonlinear activation functions, trained to learn useful representations directly from data. Stacking many layers lets the network compose simple features into increasingly abstract ones — the essence of deep learning.",
+    ex:["A multilayer perceptron", " can classify handwritten digits by learning edge and stroke detectors in early layers and digit shapes in later ones."],
+    quiz:{q:"What is the primary role of a nonlinear activation function?", o:["To speed up matrix multiplication","To let the network model nonlinear relationships","To reduce the number of weights","To normalise the input data"], a:1, e:"Without nonlinearity, stacked linear layers collapse into a single linear map; activations give the network power to represent complex, nonlinear functions."},
+    cards:[{f:"Why are nonlinear activations essential?",b:"They stop stacked layers collapsing into one linear layer, letting the network approximate complex functions."},{f:"What is a hidden layer?",b:"An intermediate layer between input and output that learns internal feature representations of the data."}]},
+  cnn:{name:"CNN", x:70, y:50, diff:"Advanced", pre:["nn","bp"], rel:["nn"], min:150,
+    def:"A convolutional neural network shares small learnable filters across the spatial dimensions of its input, detecting the same pattern wherever it appears. This weight sharing gives translation invariance and far fewer parameters, making CNNs the standard architecture for images and grid-structured data.",
+    ex:["Early-layer filters", " typically learn to detect edges and textures, which deeper layers combine into object parts and whole objects."],
+    quiz:{q:"Convolutional layers primarily exploit which property of image data?", o:["Random weight initialisation","Spatial locality and weight sharing","Sequential ordering","Full connectivity between all pixels"], a:1, e:"A convolution slides one small filter across the whole image, reusing the same weights to capture local patterns efficiently and invariantly to position."},
+    cards:[{f:"What is a convolution filter?",b:"A small patch of shared weights slid across the input to detect a local pattern (like an edge) everywhere it occurs."},{f:"How does weight sharing help?",b:"It cuts the parameter count dramatically and makes detection translation-invariant across the image."}]},
+  rnn:{name:"RNN", x:300, y:50, diff:"Advanced", pre:["nn"], rel:["attn"], min:150,
+    def:"A recurrent neural network processes a sequence one element at a time, maintaining a hidden state that carries information from previous steps forward. This gives it a form of memory suited to language and time series, though long-range dependencies are hard to preserve.",
+    ex:["Reading a sentence word by word", ", the hidden state accumulates context so the meaning of a later word can depend on earlier ones."],
+    quiz:{q:"The hidden state of an RNN functions as…", o:["A fixed lookup table","A memory of everything seen so far in the sequence","A random seed","The final output label"], a:1, e:"At each step the hidden state is updated from the previous state and the current input, acting as a running summary of the sequence so far."},
+    cards:[{f:"What limits vanilla RNNs on long sequences?",b:"Vanishing (and exploding) gradients cause early information to fade over many time steps."},{f:"What problem do LSTMs and GRUs address?",b:"They add gating to preserve information over longer ranges, mitigating the vanishing-gradient problem."}]},
+  attn:{name:"Attention", x:560, y:50, diff:"Advanced", pre:["nn","prob"], rel:["rnn"], min:170,
+    def:"A mechanism that lets each element of a sequence directly weigh and draw from every other element using learned query–key–value interactions. By modelling relationships regardless of distance, attention overcomes the range limits of RNNs and forms the core of the transformer.",
+    ex:["The word 'it' in a sentence", " can learn to attend strongly to the noun it refers to, pulling in that context no matter how far back it appeared."],
+    quiz:{q:"Attention weights are typically produced by applying a … to the compatibility scores.", o:["Softmax","Single fixed matrix","Random draw","Sorting step"], a:0, e:"Query–key scores are passed through a softmax to produce weights that sum to one, setting how much each value contributes to the output."},
+    cards:[{f:"What are query, key, and value?",b:"A query is matched against keys to produce attention weights, which then combine the corresponding values into the output."},{f:"Why did attention largely replace recurrence?",b:"It relates any two positions directly and in parallel, capturing long-range dependencies that RNNs struggle with."}]},
+};
+Object.values(CURATED).forEach(c=>{ c.loaded=true; c.w=146; c.summary=c.def; });
+
+let C=CURATED;
+let mastery={calc:"known", linalg:"known", opt:"learning", prob:"locked", gd:"locked", bp:"locked", nn:"locked", cnn:"locked", rnn:"locked", attn:"locked"};
+let selected="cnn", subTab="overview", cardIdx=0, graphTitle="Machine learning", graphViewH=590, docTextGraph="";
+
+const mval=m=>m==="known"?1:m==="learning"?0.5:0;
+const nodeW=id=>C[id].w||146;
+const cx=id=>C[id].x+nodeW(id)/2, cyTop=id=>C[id].y, cyBot=id=>C[id].y+46;
+function closure(id){ const depth={}; let q=(C[id].pre||[]).map(p=>[p,1]);
+  while(q.length){ const [c,d]=q.shift(); if(C[c] && (depth[c]===undefined||d<depth[c])){ depth[c]=d; (C[c].pre||[]).forEach(p=>q.push([p,d+1])); } } return depth; }
+function readiness(id){ const d=closure(id), ks=Object.keys(d); if(!ks.length) return 100;
+  let num=0,den=0; ks.forEach(c=>{const w=1/d[c]; den+=w; num+=w*mval(mastery[c]);}); return Math.round(100*num/den); }
+function fmtTime(m){ const h=Math.floor(m/60), mm=m%60; return h?(mm?`${h}h ${mm}m`:`${h}h`):`${mm}m`; }
+function layerOf(id, seen){ seen=seen||new Set(); if(seen.has(id))return 0; seen.add(id); const p=C[id].pre||[]; return p.length?1+Math.max(...p.map(x=>layerOf(x,seen))):0; }
+function normDiff(d){ d=(d||"").toLowerCase(); if(d.indexOf("found")===0)return"Foundational"; if(d.indexOf("adv")===0)return"Advanced"; return "Intermediate"; }
+function diffMin(d){ d=normDiff(d); return d==="Foundational"?120:d==="Advanced"?180:150; }
+
+function layout(obj){
+  const ids=Object.keys(obj), layer={};
+  function L(id, seen){ if(layer[id]!=null) return layer[id]; if(seen.has(id)) return 0; seen.add(id);
+    const p=obj[id].pre||[]; layer[id]=p.length?1+Math.max(...p.map(x=>L(x,seen))):0; return layer[id]; }
+  ids.forEach(id=>L(id,new Set()));
+  const maxL=Math.max(0,...ids.map(id=>layer[id])), byLayer={};
+  ids.forEach(id=>{ (byLayer[layer[id]]=byLayer[layer[id]]||[]).push(id); });
+  const VW=760, gap=24, ySpace=94, topPad=20;
+  Object.keys(byLayer).forEach(l=>{
+    const row=byLayer[l], n=row.length; let w=146, total=n*w+(n-1)*gap;
+    if(total>VW){ w=Math.max(96,(VW-(n-1)*gap)/n); total=n*w+(n-1)*gap; }
+    const startX=Math.max(8,(VW-total)/2);
+    row.forEach((id,i)=>{ obj[id].x=startX+i*(w+gap); obj[id].y=topPad+(maxL-l)*ySpace; obj[id].w=w; });
+  });
+  graphViewH=topPad+(maxL+1)*ySpace+20;
+}
+
+function renderGraph(){
+  document.getElementById("graph").setAttribute("viewBox","0 0 760 "+graphViewH);
+  const rel=new Set(); Object.keys(C).forEach(id=>(C[id].pre||[]).forEach(p=>{ if(id===selected||p===selected) rel.add(p+">"+id); }));
+  let e=""; Object.keys(C).forEach(id=>(C[id].pre||[]).forEach(p=>{ if(!C[p])return;
+    e+=`<line class="edge${rel.has(p+">"+id)?' hot':''}" x1="${cx(p)}" y1="${cyTop(p)}" x2="${cx(id)}" y2="${cyBot(id)}" marker-end="url(#ah)"/>`; }));
+  document.getElementById("edges").innerHTML=e;
+  let n=""; Object.keys(C).forEach(id=>{ const c=C[id], st=mastery[id]||"locked", sel=id===selected, w=nodeW(id);
+    const fs=w<118?11:12.5;
+    n+=`<g class="node-g n-${st}${sel?' sel':''}" data-id="${id}" tabindex="0" role="button" aria-label="${escapeHtml(c.name)}">
+      <rect class="halo" x="${c.x-4}" y="${c.y-4}" width="${w+8}" height="54" rx="14" fill="none" stroke="#111" stroke-opacity="0.12" stroke-width="6"/>
+      <rect class="box" x="${c.x}" y="${c.y}" width="${w}" height="46" rx="11"/>
+      <text class="lbl" x="${cx(id)}" y="${c.y+24}" text-anchor="middle" dominant-baseline="central" font-size="${fs}" font-weight="600" font-family="Inter, sans-serif" letter-spacing="-0.2">${escapeHtml(c.name)}</text>
+      ${st==="learning"?`<circle class="prq-dot" cx="${c.x+w-13}" cy="${c.y+13}" r="3.5"/>`:""}</g>`;
+  });
+  const ng=document.getElementById("nodes"); ng.innerHTML=n;
+  ng.querySelectorAll(".node-g").forEach(el=>{ el.addEventListener("click",()=>select(el.dataset.id));
+    el.addEventListener("keydown",ev=>{ if(ev.key==="Enter"||ev.key===" "){ev.preventDefault(); select(el.dataset.id);} }); });
+}
+function ringSVG(pct,r,cls){ const C0=2*Math.PI*r, off=C0*(1-pct/100), c=r+9;
+  return `<svg class="${cls}" viewBox="0 0 ${c*2} ${c*2}"><circle class="track" cx="${c}" cy="${c}" r="${r}"/>
+    <circle class="prog" cx="${c}" cy="${c}" r="${r}" stroke-dasharray="${C0}" stroke-dashoffset="${off}" transform="rotate(-90 ${c} ${c})"/>
+    <text class="pct" x="${c}" y="${c}" text-anchor="middle" dominant-baseline="central">${pct}%</text></svg>`; }
+function chip(id,next){ if(!C[id])return""; const st=mastery[id]||"locked", col=st==="known"?"var(--surface-dark)":st==="learning"?"var(--warning)":"var(--surface-strong)";
+  if(next) return `<button class="chip next" data-goto="${id}">${escapeHtml(C[id].name)}<svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+  return `<button class="chip" data-goto="${id}"><span class="cpip" style="background:${col}"></span>${escapeHtml(C[id].name)}</button>`; }
+function pHeader(c){ const st=mastery[selected]||"locked";
+  const stLabel=st==="known"?"Mastered":st==="learning"?"In progress":"Not started";
+  const stPip=st==="known"?"pip-known":st==="learning"?"pip-learning":"pip-locked";
+  return `<div class="p-top"><div><div class="p-title">${escapeHtml(c.name)}</div>
+    <div class="status-line"><span class="status-pip ${stPip}"></span>${stLabel} · ${fmtTime(c.min)} of focused study</div></div>
+    <span class="badge">${c.diff}</span></div>`;
+}
+
+async function generateConceptDetail(id){
+  const c=C[id];
+  const sys="You are Trellis, building DEEP conceptual understanding from a specific document. Explain thoroughly and precisely, grounded in the document — the intuition, the mechanism, and why it matters — so the student truly understands.";
+  const user=`Explain the concept "${c.name}" for deep understanding, grounded in the document below.\nReturn ONLY minified JSON, no code fences: {"definition":"2-3 sentence precise explanation with intuition","example":"one concrete worked example or illustration","quiz":{"q":"a understanding-check question","options":["a","b","c","d"],"answer":0,"explanation":"why the answer is right"},"cards":[{"front":"question","back":"answer"},{"front":"question","back":"answer"}]}\n\nDOCUMENT:\n"""\n${docTextGraph.slice(0,7000)}\n"""`;
+  const raw=await callClaude(sys, user); const d=parseJSON(raw);
+  if(!d) throw new Error("bad detail");
+  c.def=d.definition||c.summary; c.ex=["", d.example||""];
+  c.quiz=(d.quiz&&d.quiz.q)?{q:d.quiz.q,o:d.quiz.options||[],a:d.quiz.answer||0,e:d.quiz.explanation||""}:null;
+  c.cards=Array.isArray(d.cards)?d.cards.map(x=>({f:x.front,b:x.back})).filter(x=>x.f):[];
+  c.loaded=true;
+}
+
+function renderPanel(){
+  const c=C[selected]; const id=selected;
+  if(c.loaded===false){
+    document.getElementById("panel").innerHTML=pHeader(c)+
+      (c.summary?`<div class="p-section"><h4>In brief</h4><div class="def">${escapeHtml(c.summary)}</div></div>`:"")+
+      `<div class="loading" style="min-height:180px"><div class="spin"></div><p>Building a deep, document-grounded explanation of ${escapeHtml(c.name)}…</p></div>`;
+    if(!c._loading){ c._loading=true;
+      generateConceptDetail(id).then(()=>{ c._loading=false; if(selected===id){ renderPanel(); } })
+        .catch(()=>{ c._loading=false; c.loaded=true; if(!c.def)c.def=c.summary||"A detailed explanation couldn't be generated. Try re-uploading the document."; c.ex=c.ex||["",""]; if(selected===id) renderPanel(); });
+    }
+    return;
+  }
+  const pct=readiness(selected), dep=closure(selected), depIds=Object.keys(dep);
+  const known=depIds.filter(i=>mastery[i]==="known");
+  const missing=depIds.filter(i=>mastery[i]!=="known").sort((a,b)=>dep[b]-dep[a]||C[a].name.localeCompare(C[b].name));
+  const missTime=missing.reduce((s,i)=>s+C[i].min,0);
+  const nextUp=missing.filter(i=>(C[i].pre||[]).every(p=>mastery[p]==="known"));
+  const ringSub=pct===100?"You've covered every prerequisite. Ready to go deep on this one.":`${known.length} of ${depIds.length} prerequisites covered · about ${fmtTime(missTime)} of groundwork left.`;
+
+  let ov=`<div class="ring-wrap">${ringSVG(pct,43,"ring")}<div class="ring-info"><div class="rl">Learning readiness</div><div class="rs">${ringSub}</div></div></div>
+    <div class="p-section"><h4>Definition</h4><div class="def">${escapeHtml(c.def||"")}</div>`;
+  const exText=c.ex&&(Array.isArray(c.ex)?c.ex.join(""):c.ex);
+  if(exText&&exText.trim()) ov+=`<div class="example">${c.ex[0]?"<b>"+escapeHtml(c.ex[0])+"</b>":""}${escapeHtml(c.ex[1]!==undefined?c.ex[1]:exText)}</div>`;
+  ov+=`</div>`;
+  if((c.pre||[]).length) ov+=`<div class="p-section"><h4>Direct prerequisites</h4><div class="chips">${c.pre.map(p=>chip(p,false)).join("")}</div></div>`;
+  if(missing.length) ov+=`<div class="p-section"><h4>Learn next</h4><div class="chips">${(nextUp.length?nextUp:[missing[missing.length-1]]).slice(0,3).map(i=>chip(i,true)).join("")}</div></div>`;
+  if((c.rel||[]).length) ov+=`<div class="p-section"><h4>Related</h4><div class="chips">${c.rel.map(p=>chip(p,false)).join("")}</div></div>`;
+  const st=mastery[selected]||"locked";
+  const markBtn=st==="known"
+    ? `<button class="btn-secondary" id="markBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Mastered</button>`
+    : `<button class="btn-primary" id="markBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Mark as mastered</button>`;
+  ov+=`<div class="p-actions">${markBtn}<button class="btn-secondary" id="planJump">Study plan</button></div>`;
+
+  let quiz;
+  if(c.quiz&&c.quiz.o&&c.quiz.o.length){ quiz=`<div class="quiz-q" data-concept><div class="q-q">${escapeHtml(c.quiz.q)}</div><div class="q-opts">`;
+    c.quiz.o.forEach((opt,i)=>quiz+=`<button class="q-opt" data-i="${i}"><span class="k">${String.fromCharCode(65+i)}</span>${escapeHtml(opt)}</button>`);
+    quiz+=`</div><div class="q-fb" id="cfb" hidden></div></div>`;
+  } else { quiz=`<p class="muted-note">No quiz available for this concept.</p>`; }
+
+  let cards;
+  if((c.cards||[]).length){ const cur=c.cards[cardIdx%c.cards.length];
+    cards=`<div class="flash" id="flash"><div class="flash-inner">
+      <div class="flash-face flash-front"><span class="tag">Prompt</span><div class="ft">${escapeHtml(cur.f)}</div></div>
+      <div class="flash-face flash-back"><span class="tag">Answer</span><div class="bt">${escapeHtml(cur.b)}</div></div></div></div>
+      <div class="flash-hint">Click the card to flip</div>
+      <div class="card-nav"><button id="cardPrev" ${cardIdx===0?"disabled":""}>Previous</button>
+        <span class="card-count">${(cardIdx%c.cards.length)+1} / ${c.cards.length}</span>
+        <button id="cardNext" ${cardIdx>=c.cards.length-1?"disabled":""}>Next</button></div>`;
+  } else { cards=`<p class="muted-note">No flashcards available for this concept.</p>`; }
+
+  document.getElementById("panel").innerHTML=pHeader(c)+
+    `<div class="pill-group mini" role="tablist" style="margin-top:18px" id="subNav">
+      <button class="seg" data-sub="overview" aria-selected="${subTab==='overview'}">Overview</button>
+      <button class="seg" data-sub="quiz" aria-selected="${subTab==='quiz'}">Quiz</button>
+      <button class="seg" data-sub="cards" aria-selected="${subTab==='cards'}">Cards</button></div>
+    <div class="subpanel" id="sp-overview" ${subTab!=="overview"?"hidden":""} style="margin-top:4px">${ov}</div>
+    <div class="subpanel" id="sp-quiz" ${subTab!=="quiz"?"hidden":""} style="margin-top:20px">${quiz}</div>
+    <div class="subpanel" id="sp-cards" ${subTab!=="cards"?"hidden":""} style="margin-top:20px">${cards}</div>`;
+  wirePanel();
+}
+function wirePanel(){
+  document.querySelectorAll("#panel .chip").forEach(b=>b.addEventListener("click",()=>select(b.dataset.goto)));
+  const sn=document.getElementById("subNav"); if(sn) sn.querySelectorAll(".seg").forEach(b=>b.addEventListener("click",()=>{subTab=b.dataset.sub; renderPanel();}));
+  const mark=document.getElementById("markBtn"); if(mark) mark.addEventListener("click",()=>{ mastery[selected]=mastery[selected]==="known"?"locked":"known"; renderGraph(); renderPanel(); });
+  const pj=document.getElementById("planJump"); if(pj) pj.addEventListener("click",()=>switchView("plan"));
+  document.querySelectorAll("#panel .quiz-q[data-concept] .q-opt").forEach(b=>b.addEventListener("click",()=>{
+    const i=+b.dataset.i, q=C[selected].quiz;
+    document.querySelectorAll("#panel .quiz-q[data-concept] .q-opt").forEach(x=>x.disabled=true);
+    const fb=document.getElementById("cfb"); fb.hidden=false;
+    if(i===q.a){ b.classList.add("correct"); if(mastery[selected]==="locked"){mastery[selected]="learning"; renderGraph();}
+      fb.innerHTML=`<b>Correct.</b> ${escapeHtml(q.e)}`+(mastery[selected]==="learning"?` <b>Marked in progress.</b>`:``); }
+    else{ b.classList.add("wrong"); const ce=document.querySelector(`#panel .quiz-q[data-concept] .q-opt[data-i="${q.a}"]`); if(ce)ce.classList.add("correct"); fb.innerHTML=`<b>Not quite.</b> ${escapeHtml(q.e)}`; }
+  }));
+  const flash=document.getElementById("flash");
+  if(flash){ flash.addEventListener("click",()=>flash.classList.toggle("flipped"));
+    const nx=document.getElementById("cardNext"), pv=document.getElementById("cardPrev");
+    if(nx) nx.addEventListener("click",()=>{cardIdx++; renderPanel();});
+    if(pv) pv.addEventListener("click",()=>{ if(cardIdx>0){cardIdx--; renderPanel();} }); }
+}
+function select(id){ if(selected!==id){subTab="overview"; cardIdx=0;} selected=id; renderGraph(); renderPanel(); }
+
+function renderConcepts(){
+  const grid=document.getElementById("conceptGrid");
+  const ordered=Object.keys(C).sort((a,b)=>readiness(b)-readiness(a));
+  grid.innerHTML=ordered.map(id=>{ const c=C[id], pct=readiness(id);
+    return `<div class="cc" data-id="${id}" tabindex="0" role="button"><div class="cc-top"><span class="cc-name">${escapeHtml(c.name)}</span><span class="cc-r">${pct}%</span></div>
+      <div class="cc-def">${escapeHtml(c.def||c.summary||"")}</div><div class="cc-foot"><div class="bar"><i style="width:${pct}%"></i></div><span>${c.diff}</span></div></div>`;
+  }).join("");
+  grid.querySelectorAll(".cc").forEach(el=>{ const go=()=>{select(el.dataset.id); switchView("graph");}; el.addEventListener("click",go); el.addEventListener("keydown",ev=>{if(ev.key==="Enter")go();}); });
+}
+function renderPlan(){
+  const wrap=document.getElementById("planWrap"), goal=C[selected], pct=readiness(selected);
+  const dep=closure(selected), depIds=Object.keys(dep);
+  const known=depIds.filter(i=>mastery[i]==="known");
+  const missing=depIds.filter(i=>mastery[i]!=="known").sort((a,b)=>dep[b]-dep[a]||C[a].name.localeCompare(C[b].name));
+  const missTime=missing.reduce((s,i)=>s+C[i].min,0);
+  if(!depIds.length){ wrap.innerHTML=`<div class="plan-empty"><h1>${escapeHtml(goal.name)} is a foundation</h1><p style="margin-top:10px">It has no prerequisites — it's a starting point others build on. Pick a more advanced concept to see a full path.</p></div>`; return; }
+  const steps=missing.length?missing.map((id,i)=>{ const c=C[id], ready=(c.pre||[]).every(p=>mastery[p]==="known");
+    return `<div class="step" data-id="${id}"><div class="step-n">${i+1}</div><div class="step-body"><div class="sn">${escapeHtml(c.name)}</div><div class="sd">${ready?"Ready to start — prerequisites met":"Unlocks once earlier steps are done"}</div></div><div class="step-time">${fmtTime(c.min)}</div></div>`;
+  }).join(""):`<div class="step done"><div class="step-n"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="step-body"><div class="sn">All prerequisites complete</div><div class="sd">You're ready to focus on ${escapeHtml(goal.name)} itself</div></div></div>`;
+  wrap.innerHTML=`<div class="plan-hero">${ringSVG(pct,56,"big-ring")}<div><h1>Path to ${escapeHtml(goal.name)}</h1>
+      <div class="sub">A prerequisite-first route derived from the dependency graph. Mastering a concept updates readiness everywhere it's needed.</div>
+      <div class="plan-stats"><div><div class="v">${known.length}/${depIds.length}</div><div class="l">Prerequisites covered</div></div>
+        <div><div class="v">${missing.length}</div><div class="l">Concepts to learn</div></div>
+        <div><div class="v">${fmtTime(missTime)||"0m"}</div><div class="l">Estimated time left</div></div></div></div></div>
+    <div class="steps"><h3>Recommended order</h3>${steps}</div>`;
+  wrap.querySelectorAll(".step[data-id]").forEach(el=>el.addEventListener("click",()=>{select(el.dataset.id); switchView("graph");}));
+}
+function graphToMarkdown(){
+  const order=Object.keys(C).sort((a,b)=>layerOf(a)-layerOf(b)||C[a].name.localeCompare(C[b].name));
+  let md="# Study guide — "+graphTitle+"\n\n";
+  order.forEach(id=>{ const c=C[id];
+    md+="## "+c.name+"  ("+c.diff+")\n\n"+(c.def||c.summary||"")+"\n\n";
+    if((c.pre||[]).length) md+="**Prerequisites:** "+c.pre.map(p=>C[p]?C[p].name:p).join(", ")+"\n\n";
+    const ex=c.ex&&(Array.isArray(c.ex)?c.ex.join(""):c.ex); if(ex&&ex.trim()) md+="*Example:* "+ex.trim()+"\n\n";
+  });
+  md+="\n---\n\n## Recommended study order\n\n"+order.map((id,i)=>(i+1)+". "+C[id].name).join("\n")+"\n";
+  return md;
+}
+
+async function buildGraphFromDoc(text){
+  const sys="You extract the conceptual structure of study material for a knowledge-graph learning tool. Identify the key concepts and their prerequisite ordering.";
+  const user=`From the document below, identify 6 to 9 key concepts a student must understand for deep mastery, and the prerequisite relationships among them.\nReturn ONLY minified JSON, no code fences: {"title":"short topic name","concepts":[{"id":"slug","name":"Concept Name","difficulty":"Foundational|Intermediate|Advanced","summary":"one-sentence description"}],"edges":[["prereqId","dependentId"]]}\nEdges mean the first id is a prerequisite of the second. Use short lowercase slug ids. Order from foundational to advanced.\n\nDOCUMENT:\n"""\n${text.slice(0,9000)}\n"""`;
+  const raw=await callClaude(sys, user); const data=parseJSON(raw);
+  if(!data||!Array.isArray(data.concepts)||!data.concepts.length) throw new Error("Couldn't extract a concept structure from that document.");
+  const newC={};
+  data.concepts.forEach(c=>{ if(!c.id||!c.name)return; newC[c.id]={ name:c.name, diff:normDiff(c.difficulty), pre:[], rel:[], min:diffMin(c.difficulty), loaded:false, summary:c.summary||"", def:null, ex:null, quiz:null, cards:[], w:146 }; });
+  (data.edges||[]).forEach(pair=>{ if(!Array.isArray(pair))return; const [a,b]=pair; if(newC[a]&&newC[b]&&a!==b&&!newC[b].pre.includes(a)) newC[b].pre.push(a); });
+  Object.keys(newC).forEach(id=>{ const r=new Set(); (data.edges||[]).forEach(pair=>{ if(!Array.isArray(pair))return; const [a,b]=pair; if(a===id&&newC[b])r.add(b); if(b===id&&newC[a])r.add(a); }); newC[id].rel=[...r].slice(0,4); });
+  if(!Object.keys(newC).length) throw new Error("Couldn't extract a concept structure from that document.");
+  layout(newC);
+  C=newC; graphTitle=data.title||"Your document"; docTextGraph=text;
+  mastery={}; Object.keys(C).forEach(id=>mastery[id]="locked");
+  selected=Object.keys(C).find(id=>!(C[id].pre||[]).length)||Object.keys(C)[0];
+  subTab="overview"; cardIdx=0;
+  document.getElementById("ctxName").textContent=graphTitle;
+  document.getElementById("ctxSwitch").hidden=false;
+}
+
+/* ===== view + mode switching ===== */
+function switchView(v){
+  document.querySelectorAll("#viewNav .seg").forEach(s=>s.setAttribute("aria-selected", s.dataset.view===v));
+  document.getElementById("view-graph").hidden=v!=="graph";
+  document.getElementById("view-concepts").hidden=v!=="concepts";
+  document.getElementById("view-plan").hidden=v!=="plan";
+  if(v==="concepts") renderConcepts(); if(v==="plan") renderPlan();
+}
+document.querySelectorAll("#viewNav .seg").forEach(s=>s.addEventListener("click",()=>switchView(s.dataset.view)));
+function switchMode(m){
+  document.querySelectorAll("#modeNav .seg").forEach(s=>s.setAttribute("aria-selected", s.dataset.mode===m));
+  document.getElementById("feature-notes").hidden=m!=="notes";
+  document.getElementById("feature-graph").hidden=m!=="graph";
+  document.getElementById("ctxSwitch").hidden=(m!=="graph")||(C===CURATED&&graphTitle==="Machine learning"?false:false);
+  if(m!=="graph") document.getElementById("ctxSwitch").hidden=true; else document.getElementById("ctxSwitch").hidden=false;
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+document.querySelectorAll("#modeNav .seg").forEach(s=>s.addEventListener("click",()=>switchMode(s.dataset.mode)));
+
+/* ===== graph export ===== */
+document.getElementById("gExportPdf").addEventListener("click",()=>exportPdf("Trellis study guide — "+graphTitle, graphToMarkdown()));
+document.getElementById("gExportDoc").addEventListener("click",()=>exportDoc("Trellis study guide — "+graphTitle, graphToMarkdown()));
+
+/* ===== document upload → build graph ===== */
+const overlay=document.getElementById("overlay");
+function setStage(i,state){ const el=document.querySelector(`#stages .stage[data-s="${i}"]`); if(el){ el.classList.remove("active","done","err"); if(state) el.classList.add(state); } }
+document.getElementById("uploadBtn").addEventListener("click",()=>{ uploadTarget="graph"; fileInput.value=""; fileInput.click(); });
+document.getElementById("modalClose").addEventListener("click",()=>overlay.classList.remove("open"));
+overlay.addEventListener("click",e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
+
+fileInput.addEventListener("change", async ()=>{
+  const file=fileInput.files[0]; if(!file) return;
+  if(uploadTarget==="notes"){ handleNotesFile(file); return; }
+  overlay.classList.add("open");
+  document.getElementById("mFileName").textContent=file.name;
+  document.getElementById("mFileSize").textContent=(file.size/1024/1024).toFixed(2)+" MB";
+  document.getElementById("modalErr").style.display="none";
+  document.getElementById("modalClose").style.display="none";
+  [0,1,2].forEach(i=>setStage(i,"")); setStage(0,"active");
+  try{
+    const text=await extractText(file);
+    if(!text||text.length<40) throw new Error("No readable text found in that file.");
+    setStage(0,"done"); setStage(1,"active");
+    await buildGraphFromDoc(text);
+    setStage(1,"done"); setStage(2,"active");
+    renderGraph(); switchView("graph"); renderPanel();
+    setStage(2,"done");
+    setTimeout(()=>overlay.classList.remove("open"), 500);
+  }catch(err){
+    const a=document.querySelector("#stages .stage.active"); if(a) a.classList.add("err");
+    const me=document.getElementById("modalErr"); me.textContent=err.message+" You can also paste text into Quick Notes."; me.style.display="block";
+    document.getElementById("modalClose").style.display="inline-flex";
+  }
+});
+
+/* ===== init ===== */
+renderFormatChips();
+renderGraph();
+renderPanel();
+</script>
+<script>
+(function(){
+  var landing=document.getElementById('landing');
+  if(!landing) return;
+  function launch(){ landing.style.display='none'; try{window.scrollTo(0,0);}catch(e){} }
+  function home(){ landing.style.display='block'; landing.scrollTop=0; }
+  document.querySelectorAll('.js-launch').forEach(function(b){ b.addEventListener('click',function(e){ e.preventDefault(); launch(); }); });
+  var ah=document.querySelector('#appHeader .brand'); if(ah){ ah.style.cursor='pointer'; ah.title='Back to home'; ah.addEventListener('click',home); }
+})();
+</script>
+</body>
+</html>
