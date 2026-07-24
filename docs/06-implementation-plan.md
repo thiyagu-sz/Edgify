@@ -77,7 +77,10 @@ The heart of the system. Build it once, properly.
 - `lib/ai/prompts.ts` — versioned templates ported from the prototype
 - `lib/ai/schemas.ts` — Zod schemas for every structured output
 - `lib/ai/generate.ts` — **the full degradation ladder** from `04-resilience.md`
-- `lib/cache.ts` — content-addressed dedupe
+- `lib/cache.ts` — content-addressed dedupe. Inserts into `generation_cache` use `ON CONFLICT
+  DO NOTHING`: two users uploading the same document race on the same cache key — the exact
+  classroom scenario the cache exists for — and without it one of them errors on the duplicate
+  key (`.claude/rules/database.md`)
 - `lib/demo/` — curated graph and sample notes lifted from the prototype
 - `usage_ledger` writes on every call
 
@@ -148,7 +151,9 @@ The heart of the system. Build it once, properly.
 
 **Scope**
 - Port the dark Fluxora landing page exactly, scoped so its dark tokens cannot leak into the
-  light workspace
+  light workspace — scope the dark tokens to `#landing` (`.claude/rules/ui.md`)
+- Replace `app/(marketing)/page.tsx`, the Phase 1 placeholder that currently owns `/`, with the
+  real landing page
 - "Launch workspace" and "Try the demo" entry points
 - `/demo` route, fully interactive, no session required
 - Responsive behaviour down to mobile
