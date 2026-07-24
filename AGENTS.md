@@ -1,65 +1,119 @@
-# AGENTS.md — Rules and conventions for coding agents
+# AGENTS.md — Rules for coding agents working in this repository
 
-Trellis is an academic study workspace with two features: **Quick Notes** (fast exam revision)
-and **Knowledge Graph** (deep understanding from an uploaded document). Target ~10 concurrent
-users; $0/month infrastructure in a normal month; the only paid service is OpenRouter credits.
+Place this file at the repository root. Read it before writing any code.
 
-The full specification lives in `docs/`. Read `docs/01-architecture.md` and
-`docs/02-tech-stack.md` before starting, the data model and isolation rules in
-`docs/03-data-model.md`, the never-fail spec in `docs/04-resilience.md`, and the phase you are
-on in `docs/06-implementation-plan.md`.
+---
 
-> Provenance note: the project's original `AGENTS.md` arrived empty (0 bytes), so this file was
-> reconstructed from the `docs/` specification. If a canonical `AGENTS.md` exists, it takes
-> precedence over this reconstruction.
+## Project
 
-## The six non-negotiable rules
+Trellis: an academic study workspace. Two features — **Quick Notes** (short, high-yield exam
+revision from pasted or uploaded material) and **Knowledge Graph** (concept dependency graph
+built from an uploaded document, with per-concept explanations).
 
-1. **The model API key is server-only.** All OpenRouter/model calls run on the server; the key
-   must never reach the browser and is never prefixed `NEXT_PUBLIC_`. (`docs/01`, `docs/07`)
-2. **Every query function takes `userId` first and filters on it.** There is no row-level
-   security — tenant isolation is application code. All database access lives in
-   `lib/db/queries/*`; single-row lookups filter on **both** the id and the `userId`.
-   (`docs/03`)
-3. **All model calls go through `lib/ai/generate.ts`.** The degradation ladder, retries,
-   fallback and demo path live in that one module; no route or component calls a model provider
-   directly. (`docs/01`, `docs/04`)
-4. **The user never sees a raw failure.** On any error — rate limit, exhausted credits,
-   malformed output — show cached content, demo content, or *"Server is busy, please try again
-   in a moment."* Never a stack trace, an HTTP status code, or a vendor name. (`docs/04`,
-   `docs/README`)
-5. **Validate every model output with Zod.** Structured output is validated (schemas in
-   `lib/ai/schemas.ts`); on failure, repair once, then fall back. Never trust raw model JSON.
-   (`docs/01`, `docs/02`)
-6. **The prototype is the visual specification.** `docs/reference-trellis-prototype.html`
-   defines the design exactly. Port it faithfully — do not redesign it, do not "improve" it, do
-   not substitute a component library. Sanitise model output before `dangerouslySetInnerHTML`;
-   escape model-generated strings in SVG text and HTML attributes. (`docs/README`,
-   `.claude/rules/ui.md`)
+Full specification lives in `docs/`. Read `docs/01-architecture.md` and
+`docs/02-tech-stack.md` before your first change.
 
-## Working method
+---
 
-- Implement **one phase at a time** from `docs/06-implementation-plan.md`.
-- Stop at the end of a phase and report which acceptance criteria pass.
-- Never start the next phase unless asked.
-- Do not generate the whole app in one prompt — it compiles and does not work.
+## Non-negotiable rules
 
-## Technical constraints
+**1. Never call the model API from the browser.**
+The OpenRouter key lives in server-side environment variables only. Any code that puts
+`OPENROUTER_API_KEY` in a client component, a `NEXT_PUBLIC_` variable, or a browser fetch is
+wrong and must be rejected. This is the single most important rule in the repository.
 
-- Node 22 LTS · Next.js ^16 (App Router, streaming) · React ^19 · TypeScript `strict: true`,
-  no exceptions.
-- Database: Neon Postgres via Drizzle, using the pooled `pg` driver against the **pooled**
-  connection string. `lib/db/client.ts` must retry connection errors (Neon cold start).
-- Auth: Better Auth with **Google OAuth only**. No passwords, no email flows.
-- Models: OpenRouter via the Vercel AI SDK. Model IDs come from env with fallback lists.
-- Validate all environment variables in `lib/env.ts` (Zod) at boot; the app refuses to start on
-  a missing or malformed value.
-- Run migrations as an explicit step, never on application boot.
+**2. Every database query filters by `userId`.**
+There is no row-level security in this stack. Tenant isolation is enforced in application
+code. All database access goes through `lib/db/queries/`. Every exported function takes
+`userId` as its first parameter and applies it in the `WHERE` clause. Never write a raw query
+in a route handler or a server component.
 
-## Commands
+**3. Every model call goes through `lib/ai/generate.ts`.**
+That module owns the degradation ladder (see `docs/04-resilience.md`). Do not call
+`streamText` or the OpenRouter provider directly from anywhere else. If you need a new
+generation type, add it to that module.
 
-- Dev: `npm run dev`
-- Build: `npm run build`
-- Test: `npm test`
-- Typecheck: `npm run typecheck`
-- Lint: `npm run lint`
+**4. The user never sees a raw error.**
+No stack traces, no HTTP status codes, no vendor names, no `error.message` rendered to the
+UI. Map every failure to one of the user-facing states defined in `docs/04-resilience.md`.
+
+**5. Validate every model output with Zod before use.**
+Models return malformed JSON. `JSON.parse` without a schema check is a bug. Parse, validate,
+and on failure follow the repair-then-fallback path in `docs/04-resilience.md`.
+
+**6. The prototype is the visual specification.**
+`docs/reference/trellis-prototype.html` defines the design. Port its markup and CSS custom
+properties faithfully into React components and the Tailwind theme. Do not redesign.
+
+---
+
+## Conventions
+
+- **TypeScript strict mode.** No `any`. No `@ts-ignore` without a comment explaining why.
+- **Server Components by default.** Add `"use client"` only when you need state, effects, or
+  browser APIs.
+- **Route handlers stay thin.** Parse and validate input, call a service in `lib/`, shape the
+  response. No business logic in `app/api/`.
+- **Zod schemas live next to what they validate** and are exported for reuse.
+- **No `console.log` in committed code.** Use the logger in `lib/log.ts`.
+- **Environment variables are validated at boot** in `lib/env.ts` using Zod. The app should
+  refuse to start with a missing or malformed variable rather than fail at request time.
+
+## Directory layout
+
+```
+app/
+  (marketing)/page.tsx        Landing page — dark Fluxora theme
+  (app)/                      Authenticated workspace — light theme
+    notes/page.tsx
+    graph/page.tsx
+  api/
+    auth/[...all]/route.ts    Better Auth handler
+    notes/generate/route.ts   Streaming generation
+    documents/route.ts        Upload + parse
+    graph/[id]/route.ts       Graph read + status
+lib/
+  ai/
+    generate.ts               Degradation ladder. All model calls go here
+    prompts.ts                Versioned prompt templates
+    schemas.ts                Zod schemas for model output
+    models.ts                 Model routing config
+  db/
+    schema.ts                 Drizzle schema
+    queries/                  All database access, userId-scoped
+  demo/                       Static fallback content (see 04-resilience)
+  parse/                      PDF/DOCX text extraction
+  quota.ts                    Per-user limits
+  cache.ts                    Content-addressed dedupe
+  env.ts                      Validated environment
+  log.ts
+components/                   Ported from the prototype
+docs/
+```
+
+---
+
+## Before you write code
+
+- **Check the current API.** The AI SDK, Better Auth, and Next.js all move quickly. Where a
+  document shows a code pattern, treat it as intent rather than exact syntax, and verify the
+  signature against the library's current documentation. Do not invent API surface.
+- **Prefer the smallest change that satisfies the acceptance criteria.** These documents
+  describe a deliberately small system. Adding a queue, a cache layer, a state management
+  library, or a service abstraction that the spec does not ask for is a regression.
+- **If a requirement is ambiguous, ask rather than guess.** A wrong assumption baked into
+  Phase 2 is expensive by Phase 6.
+
+## Before you say a phase is done
+
+Run all of these:
+
+```bash
+npm run typecheck     # tsc --noEmit
+npm run lint
+npm run test
+npm run build
+```
+
+Then check the phase's acceptance criteria in `docs/06-implementation-plan.md` explicitly,
+one line at a time. "It compiles" is not "it works".

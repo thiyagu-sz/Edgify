@@ -8,8 +8,8 @@ export default function SignInPage() {
 
   async function handleGoogle() {
     setPending(true);
-    await authClient.signIn.social({ provider: "google", callbackURL: "/" });
-    // On success the browser is redirected to Google, then back to "/".
+    await authClient.signIn.social({ provider: "google", callbackURL: "/notes" });
+    // On success the browser is redirected to Google, then back to the workspace.
     setPending(false);
   }
 

@@ -1,7 +1,8 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { countUserDocuments, pingDatabase } from "@/lib/db/queries/health";
+import { pingDatabase } from "@/lib/db/client";
+import { countUserDocuments } from "@/lib/db/queries/documents";
 import { SignOutButton } from "@/components/sign-out-button";
 
 export const dynamic = "force-dynamic";

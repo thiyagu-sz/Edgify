@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { env } from "../env";
@@ -79,4 +80,17 @@ export async function withDbRetry<T>(
     }
   }
   throw lastError;
+}
+
+/**
+ * Infrastructure connectivity check. Deliberately NOT in lib/db/queries/ — that directory is
+ * reserved for tenant-scoped data access where every exported function takes `userId` first
+ * (AGENTS.md rule 2). This touches no user data; it only proves the connection is alive, and
+ * exercises the Neon cold-start retry.
+ */
+export async function pingDatabase(): Promise<boolean> {
+  return withDbRetry(async () => {
+    const result = await db.execute(sql`select 1 as ok`);
+    return result.rows.length > 0;
+  });
 }
