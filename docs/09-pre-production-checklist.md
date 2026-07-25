@@ -138,6 +138,36 @@ Uploaded documents are untrusted input that reaches a model. Treat them as data 
 - [ ] Lockfile committed; CI installs with `npm ci`
 - [ ] No dependency added during the build that nobody can explain
 
+> **2026-07-25 — Group 1 production advisories (Phase 7 gate item).**
+> `npm audit --omit=dev` reports three **high** findings in the production tree, all transitive
+> under `next`:
+>
+> | Package | GHSA | Vulnerable range | Fixed in |
+> |---|---|---|---|
+> | postcss | [GHSA-6g55-p6wh-862q](https://github.com/advisories/GHSA-6g55-p6wh-862q) — arbitrary file read via `sourceMappingURL` | `<=8.5.11` | `>=8.5.12` |
+> | postcss | [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849) — path traversal via source-map auto-load | `<=8.5.17` | `>=8.5.18` |
+> | sharp | [GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj) — inherited libvips CVE-2026-33327/33328/35590/35591 | `<0.35.0` | `>=0.35.0` |
+>
+> Net thresholds to clear Group 1: **postcss `>=8.5.18`** (covers both postcss advisories) and
+> **sharp `>=0.35.0`**.
+>
+> **Current state:** `next@16.2.11` is the latest **stable** release and pins `postcss 8.4.31`;
+> even the newest 16.x pre-releases pin only `postcss 8.5.10`, so **no 16.x release can clear the
+> postcss advisories** (they need `>=8.5.18`). The risk is dev/build-time (source-map handling,
+> image optimisation), not a request-path exposure, so it is accepted for now and gated here.
+>
+> **Resolution, in priority order:**
+> 1. **Preferred — upgrade to a stable Next that pins `postcss >=8.5.18`** (the 16.3 line, in
+>    `preview` as of this date; do **not** ship a `canary`/`preview` to production). This also
+>    lifts sharp to `>=0.35.x`, clearing all three in one bump with no override.
+> 2. **Fallback — npm `overrides` forcing `postcss >=8.5.18` and `sharp >=0.35.0`.** Deferred
+>    deliberately: overriding `sharp` swaps a native module and can break the Phase 7 Docker
+>    build, so if taken this route **must be load-tested through the Docker image specifically**
+>    (build succeeds, image optimisation works, no runtime `sharp` load error), not just locally.
+>
+> - [ ] **Phase 7 gate:** Group 1 cleared via option 1, or via option 2 with a passing Docker
+>       build + load test. Re-run `npm audit --omit=dev` and confirm zero high/critical.
+
 ### 2.6 Information disclosure
 
 - [ ] Production error responses contain no stack traces, file paths, SQL, or dependency names
