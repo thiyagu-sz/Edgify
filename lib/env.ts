@@ -16,6 +16,31 @@ import { z } from "zod";
  * Server-only: never import this from a Client Component. None of these values may ever be
  * exposed to the browser, so none is prefixed `NEXT_PUBLIC_`.
  */
+/**
+ * An optional URL that also accepts the empty string. Committed `.env` templates ship
+ * `SENTRY_DSN=""`; treat that as "not set" rather than a malformed URL so dev still boots.
+ */
+const optionalUrl = z.preprocess(
+  (v) => (v === "" || v === undefined ? undefined : v),
+  z.url("must be a valid URL").optional(),
+);
+
+/** A named IANA time zone. A bad value must stop boot, not silently fall back to UTC. */
+const timeZone = z
+  .string()
+  .refine(
+    (v) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: v });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be a valid IANA time zone, e.g. UTC or Asia/Kolkata" },
+  )
+  .default("UTC");
+
 const envSchema = z.object({
   DATABASE_URL: z
     .string()
@@ -29,6 +54,20 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.url("must be a valid URL, e.g. http://localhost:3000"),
   GOOGLE_CLIENT_ID: z.string().min(1, "required — Google OAuth client id"),
   GOOGLE_CLIENT_SECRET: z.string().min(1, "required — Google OAuth client secret"),
+
+  // --- Phase 2: guardrails ---------------------------------------------------
+  // Error reporting. Optional so the app still boots in dev without Sentry configured.
+  // A Sentry DSN is a public ingestion key, not a secret — NEXT_PUBLIC_ is safe here and
+  // does NOT match the secret-leak grep in docs/09 §1.1.
+  SENTRY_DSN: optionalUrl,
+  NEXT_PUBLIC_SENTRY_DSN: optionalUrl,
+  // Per-user daily generation quota. Reset boundary is the calendar day in QUOTA_TIMEZONE.
+  QUOTA_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
+  QUOTA_TIMEZONE: timeZone,
+  // Fixed-window rate limiting for unauthenticated routes.
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),

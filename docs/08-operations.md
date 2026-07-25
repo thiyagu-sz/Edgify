@@ -48,6 +48,106 @@ Three. Resist adding more — alerts you ignore are worse than no alerts.
 
 ---
 
+## Guardrail setup and fire drills (Phase 2)
+
+The guardrails that keep spend and blast radius bounded. Set these up before any code that can
+spend money (docs/06 Phase 2, docs/09 §1.4).
+
+### Hard billing cap (GCP)
+
+Protects Google-side spend (Cloud Run and anything billed to the project). OpenRouter and Neon
+are billed separately and capped on their own.
+
+```
+Cloud Billing Budget ──threshold exceeded──▶ Pub/Sub topic ──▶ Cloud Function (capBilling)
+                                                                     │
+                                                    detaches billing account → billing off
+```
+
+Source: [`infra/billing-cap/`](../infra/billing-cap/). Identifiers used below:
+
+```bash
+PROJECT_ID=trellis-prod; BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
+TOPIC=billing-alerts;     REGION=us-central1
+```
+
+**One-time setup**
+
+1. Topic the budget publishes to:
+   ```bash
+   gcloud pubsub topics create "$TOPIC" --project "$PROJECT_ID"
+   ```
+2. Budget with a hard amount and the topic attached (Console → Billing → Budgets & alerts →
+   *Manage notifications* → Connect a Pub/Sub topic), or:
+   ```bash
+   gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
+     --display-name="trellis-hard-cap" --budget-amount=50USD \
+     --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
+     --all-updates-rule-pubsub-topic="projects/$PROJECT_ID/topics/$TOPIC"
+   ```
+3. Deploy the function, starting in dry-run so the first drill proves wiring without touching
+   billing:
+   ```bash
+   gcloud functions deploy cap-billing --gen2 --runtime=nodejs22 --region="$REGION" \
+     --source=infra/billing-cap --entry-point=capBilling --trigger-topic="$TOPIC" \
+     --set-env-vars=GCP_PROJECT="$PROJECT_ID",CAP_DRY_RUN=true
+   ```
+4. Let the function change billing:
+   ```bash
+   SA=$(gcloud functions describe cap-billing --gen2 --region="$REGION" \
+        --format='value(serviceConfig.serviceAccountEmail)')
+   gcloud billing accounts add-iam-policy-binding "$BILLING_ACCOUNT" \
+     --member="serviceAccount:$SA" --role="roles/billing.admin"
+   ```
+
+**Fire drill — prove the cap fires, not just that it exists.** Pre-deploy GCP spend is ~$0, and
+a budget only alerts when `cost ≥ threshold × budget`, so we publish a **synthetic**
+budget-exceeded message (Google's own recommended test).
+
+*Drill A — wiring, dry run:*
+```bash
+gcloud pubsub topics publish "$TOPIC" --project "$PROJECT_ID" \
+  --message "$(cat infra/billing-cap/sample-budget-message.json)"
+gcloud functions logs read cap-billing --gen2 --region="$REGION" --limit=20
+# Expect: "budget_notification" then "DRY RUN: would disable billing …"
+```
+
+*Drill B — the real cap, in a maintenance window:*
+```bash
+gcloud functions deploy cap-billing --gen2 --region="$REGION" \
+  --source=infra/billing-cap --entry-point=capBilling --trigger-topic="$TOPIC" \
+  --update-env-vars=CAP_DRY_RUN=false
+gcloud pubsub topics publish "$TOPIC" --project "$PROJECT_ID" \
+  --message "$(cat infra/billing-cap/sample-budget-message.json)"
+gcloud beta billing projects describe "$PROJECT_ID"    # billingEnabled: false  ← action fired
+# ── RESTORE ──
+gcloud beta billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT"
+gcloud beta billing projects describe "$PROJECT_ID"    # billingEnabled: true
+```
+Evidence to keep: the published message, the function log line, and the
+`billingEnabled: false → true` transition.
+
+> **Phase 7 follow-up:** once Cloud Run has real spend, lower the budget amount below actual
+> spend once to confirm the **email** notification also fires, then restore it.
+
+### Neon spending limit
+
+Neon Console → Project → **Settings → Billing / Usage limits** → set a monthly spend limit.
+Neon enforces it by suspending compute, so the app degrades to landing + demo (docs/04 §6)
+rather than accruing runaway cost. Recorded as configured (screenshot in the ops log); no
+"exceed it" drill is run because that would require spending the limit — a conscious decision
+under the checklist's grading model.
+
+### Owned elsewhere
+
+- **Cloud Run `--max-instances`** — a finite ceiling, set as a deploy flag in Phase 7.
+- **OpenRouter balance** — kept only as large as you are willing to lose; set with the key in
+  Phase 3.
+- **Per-user daily quota** — enforced in [`lib/quota.ts`](../lib/quota.ts); boundary and
+  concurrency guarantees are covered by its tests.
+
+---
+
 ## Runbooks
 
 ### "Server is busy" reported by a user

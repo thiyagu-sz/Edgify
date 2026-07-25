@@ -177,6 +177,25 @@ export const usageCounters = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.day] })],
 );
 
+/**
+ * Fixed-window rate limiting for unauthenticated routes. Postgres counters are the chosen
+ * mechanism at this volume (docs/02-tech-stack.md deliberately excludes Redis: "Postgres
+ * counters are sufficient at this volume"). One row per (bucket, window); the count is
+ * incremented atomically with ON CONFLICT ... DO UPDATE. Rows for elapsed windows are dead
+ * weight and are pruned opportunistically — never read after their window closes.
+ */
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    // Identifies who/what is limited for a given rule, e.g. `health:1.2.3.4`.
+    bucketKey: text("bucket_key").notNull(),
+    // Start of the fixed window this count belongs to (floor(now / windowMs)).
+    windowStart: timestamptz("window_start").notNull(),
+    count: integer("count").default(0).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.bucketKey, table.windowStart] })],
+);
+
 /** Append-only record of every model call — how quotas, cost visibility and abuse detection work. */
 export const usageLedger = pgTable(
   "usage_ledger",

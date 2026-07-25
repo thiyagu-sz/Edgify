@@ -8,6 +8,13 @@
       "when": 1784821910044,
       "tag": "0000_rare_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784992074417,
+      "tag": "0001_nifty_kang",
+      "breakpoints": true
     }
   ]
 }

@@ -51,6 +51,50 @@ describe("parseEnv", () => {
   });
 });
 
+describe("Phase 2 guardrail vars", () => {
+  it("defaults quota, timezone and rate-limit when omitted", () => {
+    const env = parseEnv(validEnv());
+    expect(env.QUOTA_DAILY_LIMIT).toBe(30);
+    expect(env.QUOTA_TIMEZONE).toBe("UTC");
+    expect(env.RATE_LIMIT_MAX).toBe(30);
+    expect(env.RATE_LIMIT_WINDOW_MS).toBe(60_000);
+    expect(env.SENTRY_DSN).toBeUndefined();
+  });
+
+  it("coerces numeric env strings to numbers", () => {
+    const raw = validEnv();
+    raw.QUOTA_DAILY_LIMIT = "5";
+    raw.RATE_LIMIT_WINDOW_MS = "1000";
+    const env = parseEnv(raw);
+    expect(env.QUOTA_DAILY_LIMIT).toBe(5);
+    expect(env.RATE_LIMIT_WINDOW_MS).toBe(1000);
+  });
+
+  it("rejects a non-positive quota limit", () => {
+    const raw = validEnv();
+    raw.QUOTA_DAILY_LIMIT = "0";
+    expect(() => parseEnv(raw)).toThrow(/QUOTA_DAILY_LIMIT/);
+  });
+
+  it("rejects an unknown time zone", () => {
+    const raw = validEnv();
+    raw.QUOTA_TIMEZONE = "Mars/Olympus_Mons";
+    expect(() => parseEnv(raw)).toThrow(/QUOTA_TIMEZONE/);
+  });
+
+  it("treats an empty SENTRY_DSN as unset rather than a malformed URL", () => {
+    const raw = validEnv();
+    raw.SENTRY_DSN = "";
+    expect(parseEnv(raw).SENTRY_DSN).toBeUndefined();
+  });
+
+  it("rejects a malformed SENTRY_DSN", () => {
+    const raw = validEnv();
+    raw.SENTRY_DSN = "not-a-url";
+    expect(() => parseEnv(raw)).toThrow(/SENTRY_DSN/);
+  });
+});
+
 describe("assertEnv (boot-time validation)", () => {
   it("throws with a clear message when a required var is absent from process.env", async () => {
     const saved = process.env;

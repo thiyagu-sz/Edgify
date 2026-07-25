@@ -1,0 +1,10 @@
+{
+  "name": "trellis-billing-cap",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pub/Sub-triggered Cloud Function that disables project billing when a budget is exceeded.",
+  "main": "index.js",
+  "dependencies": {
+    "@google-cloud/billing": "^4.2.0"
+  }
+}
