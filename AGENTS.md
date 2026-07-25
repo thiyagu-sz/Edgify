@@ -22,6 +22,15 @@ The OpenRouter key lives in server-side environment variables only. Any code tha
 `OPENROUTER_API_KEY` in a client component, a `NEXT_PUBLIC_` variable, or a browser fetch is
 wrong and must be rejected. This is the single most important rule in the repository.
 
+Before every commit, scan the staged diff for secret **values** (not variable names — matching
+identifiers like `GOOGLE_CLIENT_SECRET` only produces false positives):
+
+```bash
+git diff --cached | grep -iE "sk-or-v1|postgres://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https"
+```
+
+If it prints anything, stop and inspect — a real credential may be about to be committed.
+
 **2. Every database query filters by `userId`.**
 There is no row-level security in this stack. Tenant isolation is enforced in application
 code. All database access goes through `lib/db/queries/`. Every exported function takes

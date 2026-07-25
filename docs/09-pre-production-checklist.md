@@ -19,6 +19,12 @@ watching.
 The single worst failure available to this system. Anyone with the key spends your credits.
 
 ```bash
+# Pre-commit: scan the staged diff for secret VALUES, not variable names. Matching identifiers
+# (e.g. GOOGLE_CLIENT_SECRET) only produces false positives; match the value that follows.
+git diff --cached | grep -iE "sk-or-v1|postgres://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https" \
+  && echo "SECRET VALUE STAGED — DO NOT COMMIT" || echo "clean"
+
+# Pre-deploy: the built client bundle must contain no key, and no secret may be NEXT_PUBLIC_.
 npm run build
 grep -r "sk-or-v1" .next/static/ && echo "LEAK — DO NOT DEPLOY" || echo "clean"
 grep -rn "NEXT_PUBLIC_.*\(OPENROUTER\|API_KEY\|SECRET\)" . --include="*.ts" --include="*.tsx"
