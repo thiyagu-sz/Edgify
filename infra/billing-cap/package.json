@@ -5,6 +5,7 @@
   "description": "Pub/Sub-triggered Cloud Function that disables project billing when a budget is exceeded.",
   "main": "index.js",
   "dependencies": {
-    "@google-cloud/billing": "^4.2.0"
+    "@google-cloud/billing": "^4.2.0",
+    "@google-cloud/functions-framework": "^3.4.0"
   }
 }

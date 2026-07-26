@@ -12,7 +12,13 @@
  *
  * The function's service account needs `roles/billing.admin` on the billing account to change
  * a project's billing link.
+ *
+ * Registered with the Functions Framework as a CloudEvent function (not a bare `exports.x`).
+ * On gen2, that is what guarantees the handler receives the CloudEvent — with the Pub/Sub
+ * message at `cloudEvent.data.message.data` — rather than an HTTP request or a gen1-style
+ * (data, context) pair, either of which leaves the payload empty.
  */
+const functions = require("@google-cloud/functions-framework");
 const { CloudBillingClient } = require("@google-cloud/billing");
 
 const billing = new CloudBillingClient();
@@ -20,23 +26,15 @@ const PROJECT_ID = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
 const PROJECT_NAME = `projects/${PROJECT_ID}`;
 const DRY_RUN = process.env.CAP_DRY_RUN === "true";
 
-exports.capBilling = async (cloudEvent) => {
-  const message = cloudEvent?.data?.message;
-  const payload = message?.data
-    ? JSON.parse(Buffer.from(message.data, "base64").toString("utf8"))
-    : {};
-
+functions.cloudEvent("capBilling", async (cloudEvent) => {
+  const payload = decodePayload(cloudEvent);
   const costAmount = Number(payload.costAmount ?? 0);
   const budgetAmount = Number(payload.budgetAmount ?? 0);
 
+  // Plain-text line so it is visible in `gcloud functions logs read` (JSON logs land in
+  // jsonPayload, which that command renders blank).
   console.log(
-    JSON.stringify({
-      event: "budget_notification",
-      budgetDisplayName: payload.budgetDisplayName,
-      costAmount,
-      budgetAmount,
-      dryRun: DRY_RUN,
-    }),
+    `budget_notification name=${payload.budgetDisplayName} cost=${costAmount} budget=${budgetAmount} dryRun=${DRY_RUN}`,
   );
 
   if (!(costAmount > budgetAmount)) {
@@ -57,7 +55,22 @@ exports.capBilling = async (cloudEvent) => {
   }
 
   await disableBilling();
-};
+});
+
+/**
+ * Decode the Pub/Sub JSON payload from the CloudEvent. The base64 body normally lives at
+ * `data.message.data`; tolerate `data.data` as a fallback for other delivery shapes.
+ */
+function decodePayload(cloudEvent) {
+  const base64 =
+    cloudEvent?.data?.message?.data ?? cloudEvent?.data?.data ?? null;
+  if (!base64) return {};
+  try {
+    return JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+  } catch {
+    return {};
+  }
+}
 
 async function isBillingEnabled() {
   const [info] = await billing.getProjectBillingInfo({ name: PROJECT_NAME });
