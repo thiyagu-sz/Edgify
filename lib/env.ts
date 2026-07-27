@@ -68,6 +68,21 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 
+  // --- Phase 3: the AI layer -------------------------------------------------
+  // OpenRouter. SERVER-ONLY — never NEXT_PUBLIC_ (AGENTS.md rule 1). Required: the app should
+  // not boot pretending it can generate when it cannot.
+  OPENROUTER_API_KEY: z
+    .string()
+    .min(1, "required — OpenRouter API key (server-only, never NEXT_PUBLIC_)"),
+  // Model routing. Free-tier ids rotate on OpenRouter, so they live in env with fallbacks —
+  // a retirement is a config change, not an outage (docs/02-tech-stack.md).
+  OPENROUTER_FREE_MODEL: z.string().min(1).default("openai/gpt-oss-20b:free"),
+  // Comma-separated additional free ids tried before falling to the paid tier.
+  OPENROUTER_FREE_FALLBACKS: z.string().default(""),
+  OPENROUTER_PAID_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
+  // Bump to invalidate the generation cache when prompt templates change (docs/08 §prompts).
+  PROMPT_VERSION: z.string().min(1).default("v1"),
+
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),

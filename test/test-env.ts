@@ -10,4 +10,6 @@ export function applyTestEnvDefaults(): void {
   process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
   process.env.GOOGLE_CLIENT_ID ??= "test-client-id";
   process.env.GOOGLE_CLIENT_SECRET ??= "test-client-secret";
+  // Phase 3: required, but tests inject a fake model runner so no real key is used.
+  process.env.OPENROUTER_API_KEY ??= "test-openrouter-key";
 }

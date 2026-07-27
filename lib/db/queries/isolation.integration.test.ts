@@ -7,6 +7,7 @@ import {
   getDocument,
   listDocuments,
 } from "./documents";
+import { readLedger, recordLedger } from "./ledger";
 
 // `import.meta.glob` is a Vite/Vitest feature statically replaced at transform time (so it must
 // be called by its full name). Type it here since the app tsconfig doesn't load vite/client.
@@ -57,9 +58,10 @@ const CASE_NAMES = [
   "documents.listDocuments",
   "documents.countUserDocuments",
   "documents.deleteDocument",
+  "ledger.readLedger",
 ];
 // Writers that only ever create rows under the caller's own userId — no cross-user read path.
-const WRITER_ALLOWLIST = ["documents.createDocument"];
+const WRITER_ALLOWLIST = ["documents.createDocument", "ledger.recordLedger"];
 
 describe("cross-user isolation: documents", () => {
   it("getDocument: owner sees the row; the other user sees nothing", async () => {
@@ -95,6 +97,17 @@ describe("cross-user isolation: documents", () => {
     expect((await getDocument(A, doc.id))?.id).toBe(doc.id); // still there
     expect(await deleteDocument(A, doc.id)).toBe(true); // positive control
     expect(await getDocument(A, doc.id)).toBeUndefined();
+  });
+
+  it("readLedger: each user sees only their own ledger rows", async () => {
+    const ownerA = await createTestUser();
+    const ownerB = await createTestUser();
+    await recordLedger(ownerA, { operation: "quick_notes", tier: "free", outcome: "ok" });
+    const rowsA = await readLedger(ownerA);
+    const rowsB = await readLedger(ownerB);
+    expect(rowsA.length).toBeGreaterThanOrEqual(1); // positive control
+    expect(rowsA.every((r) => r.userId === ownerA)).toBe(true);
+    expect(rowsB.some((r) => r.userId === ownerA)).toBe(false); // isolation
   });
 
   it("coverage guard: every exported query function has an isolation case or is an allowlisted writer", () => {

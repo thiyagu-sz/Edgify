@@ -8,6 +8,7 @@ function validEnv(): Record<string, string | undefined> {
     BETTER_AUTH_URL: "http://localhost:3000",
     GOOGLE_CLIENT_ID: "google-client-id",
     GOOGLE_CLIENT_SECRET: "google-client-secret",
+    OPENROUTER_API_KEY: "test-openrouter-key",
     NODE_ENV: "test",
   };
 }
@@ -92,6 +93,22 @@ describe("Phase 2 guardrail vars", () => {
     const raw = validEnv();
     raw.SENTRY_DSN = "not-a-url";
     expect(() => parseEnv(raw)).toThrow(/SENTRY_DSN/);
+  });
+});
+
+describe("Phase 3 AI-layer vars", () => {
+  it("requires OPENROUTER_API_KEY", () => {
+    const raw = validEnv();
+    delete raw.OPENROUTER_API_KEY;
+    expect(() => parseEnv(raw)).toThrow(/OPENROUTER_API_KEY/);
+  });
+
+  it("defaults model routing and prompt version", () => {
+    const env = parseEnv(validEnv());
+    expect(env.OPENROUTER_FREE_MODEL).toMatch(/:free$/);
+    expect(env.OPENROUTER_PAID_MODEL.length).toBeGreaterThan(0);
+    expect(env.OPENROUTER_FREE_FALLBACKS).toBe("");
+    expect(env.PROMPT_VERSION).toBe("v1");
   });
 });
 

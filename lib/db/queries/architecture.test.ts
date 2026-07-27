@@ -13,11 +13,18 @@ const SCAN_DIRS = ["app", "lib"];
 
 // Where direct DB access is legitimate:
 const ALLOW_PREFIXES = [
-  join("lib", "db", "queries"), // the query layer itself
+  join("lib", "db", "queries"), // the userId-first query layer itself
   join("lib", "db", "client.ts"), // pool + non-user health ping
+  // Infra data modules: deliberately non-tenant (the shared generation cache) or per-key/day
+  // counter tables — reviewed and integration-tested, not raw tenant-row access.
+  join("lib", "cache.ts"),
+  join("lib", "quota.ts"),
+  join("lib", "rate-limit.ts"),
 ];
 
-const DB_CALL = /\bdb\s*\.\s*(?:select|insert|update|delete|query|execute)\b/;
+// Whole-file (not line-by-line): `\s*` spans newlines, so this also catches multi-line chains
+// like `db\n  .insert(...)`.
+const DB_CALL = /\bdb\s*\.\s*(?:select|insert|update|delete|query|execute)\b/g;
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -36,18 +43,21 @@ function isAllowed(rel: string): boolean {
   return ALLOW_PREFIXES.some((a) => rel === a || rel.startsWith(a + sep));
 }
 
+function lineOf(text: string, index: number): number {
+  return text.slice(0, index).split("\n").length;
+}
+
 describe("architecture: no DB access outside the query layer", () => {
-  it("finds no db.<verb>() calls outside lib/db/queries or lib/db/client.ts", () => {
+  it("finds no db.<verb>() calls outside the query layer or allowlisted infra modules", () => {
     const offenders: string[] = [];
     for (const d of SCAN_DIRS) {
       for (const file of walk(join(process.cwd(), d))) {
         const rel = relative(process.cwd(), file);
         if (isAllowed(rel)) continue;
-        readFileSync(file, "utf8")
-          .split("\n")
-          .forEach((line, i) => {
-            if (DB_CALL.test(line)) offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
-          });
+        const text = readFileSync(file, "utf8");
+        for (const match of text.matchAll(DB_CALL)) {
+          offenders.push(`${rel}:${lineOf(text, match.index)}  ${match[0]}`);
+        }
       }
     }
     expect(
