@@ -71,28 +71,46 @@ PROJECT_ID=trellis-prod; BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
 TOPIC=billing-alerts;     REGION=us-central1
 ```
 
-**One-time setup**
+**One-time setup** (run from the repo root; in Cloud Shell, `gh repo clone thiyagu-sz/Edgify` first)
 
+0. Enable the APIs and create the Pub/Sub service identity Eventarc needs:
+   ```bash
+   gcloud services enable cloudbilling.googleapis.com billingbudgets.googleapis.com \
+     pubsub.googleapis.com cloudfunctions.googleapis.com run.googleapis.com \
+     cloudbuild.googleapis.com artifactregistry.googleapis.com eventarc.googleapis.com \
+     logging.googleapis.com --project="$PROJECT_ID"
+   gcloud beta services identity create --service=pubsub.googleapis.com --project="$PROJECT_ID"
+   ```
 1. Topic the budget publishes to:
    ```bash
    gcloud pubsub topics create "$TOPIC" --project "$PROJECT_ID"
    ```
 2. Budget with a hard amount and the topic attached (Console → Billing → Budgets & alerts →
-   *Manage notifications* → Connect a Pub/Sub topic), or:
+   *Manage notifications* → Connect a Pub/Sub topic), or — note the GA flag is
+   `--notifications-rule-pubsub-topic` (`--all-updates-rule-pubsub-topic` exists only on the
+   alpha/beta tracks):
    ```bash
    gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
      --display-name="trellis-hard-cap" --budget-amount=50USD \
      --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
-     --all-updates-rule-pubsub-topic="projects/$PROJECT_ID/topics/$TOPIC"
+     --notifications-rule-pubsub-topic="projects/$PROJECT_ID/topics/$TOPIC"
    ```
-3. Deploy the function, starting in dry-run so the first drill proves wiring without touching
-   billing:
+3. Grant the Pub/Sub service agent token creation (Eventarc → gen2 push auth; the deploy
+   prompts for this if it is missing):
+   ```bash
+   PUBSUB_SA="service-$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')@gcp-sa-pubsub.iam.gserviceaccount.com"
+   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+     --member="serviceAccount:$PUBSUB_SA" --role="roles/iam.serviceAccountTokenCreator"
+   ```
+4. Deploy the function, starting in dry-run so the first drill proves wiring without touching
+   billing. (The source registers via `functions.cloudEvent` — a bare gen1-style `exports.x`
+   leaves the CloudEvent payload empty on gen2, which reads as "within budget" every time.)
    ```bash
    gcloud functions deploy cap-billing --gen2 --runtime=nodejs22 --region="$REGION" \
      --source=infra/billing-cap --entry-point=capBilling --trigger-topic="$TOPIC" \
-     --set-env-vars=GCP_PROJECT="$PROJECT_ID",CAP_DRY_RUN=true
+     --set-env-vars=GCP_PROJECT="$PROJECT_ID",CAP_DRY_RUN=true --project="$PROJECT_ID"
    ```
-4. Let the function change billing:
+5. Let the function change billing:
    ```bash
    SA=$(gcloud functions describe cap-billing --gen2 --region="$REGION" \
         --format='value(serviceConfig.serviceAccountEmail)')
@@ -127,16 +145,30 @@ gcloud beta billing projects describe "$PROJECT_ID"    # billingEnabled: true
 Evidence to keep: the published message, the function log line, and the
 `billingEnabled: false → true` transition.
 
+> **Drill result — 2026-07-26 (project `innovationmate`).** **Drill A verified:** a synthetic
+> `cost=500 / budget=50` message produced `budget_notification … cost=500 budget=50 dryRun=true`
+> then `DRY RUN: would disable billing for projects/innovationmate (cost 500 > budget 50).`
+> (execution `1wwc0tvintnw`). **Drill B completed by the operator:** billing detached
+> (`billingEnabled: false`) and re-linked (`billingEnabled: true`). **AC1 satisfied.** Two gotchas
+> hit and folded into the setup above: the budget flag is `--notifications-rule-pubsub-topic`,
+> and the Pub/Sub service agent needed `roles/iam.serviceAccountTokenCreator`; also the function
+> had to be a `functions.cloudEvent` CloudEvent function or the payload arrived empty.
+
 > **Phase 7 follow-up:** once Cloud Run has real spend, lower the budget amount below actual
 > spend once to confirm the **email** notification also fires, then restore it.
 
 ### Neon spending limit
 
-Neon Console → Project → **Settings → Billing / Usage limits** → set a monthly spend limit.
-Neon enforces it by suspending compute, so the app degrades to landing + demo (docs/04 §6)
-rather than accruing runaway cost. Recorded as configured (screenshot in the ops log); no
-"exceed it" drill is run because that would require spending the limit — a conscious decision
-under the checklist's grading model.
+**Status: N/A on the Free Plan (recorded 2026-07-25).** The current project is on Neon's Free
+Plan, which has no billing attached and exposes no *Billing / Usage limits* page — the dashboard
+only offers **Plans**. There is nothing to cap: the free tier enforces fixed allowances (compute
+hours, storage) by throttling/suspending compute, not by charging, so runaway *spend* is not
+possible. The app degrading to landing + demo on suspend (docs/04 §6) is the same behaviour a
+spend limit would produce. This is a conscious decision under the checklist's grading model.
+
+**Revisit when the project moves to a paid Neon plan:** set a monthly spend limit via Neon
+Console → Project → **Settings → Billing / Usage limits**, and record it (screenshot in the ops
+log).
 
 ### Owned elsewhere
 

@@ -68,9 +68,9 @@ then be served to anyone who uploads that same file.
 
 ### 1.4 Billing cannot run away
 
-- [ ] GCP budget alert configured **and confirmed firing** with a test threshold
-- [ ] GCP budget action set to disable billing at a hard cap
-- [ ] Neon spending limit set
+- [x] GCP budget alert configured **and confirmed firing** with a test threshold — verified 2026-07-26 via a synthetic Pub/Sub budget message (Drill A: `DRY RUN: would disable billing … cost 500 > budget 50`)
+- [x] GCP budget action set to disable billing at a hard cap — verified 2026-07-26 (Drill B on `innovationmate`: real detach → `billingEnabled: false`, then re-linked → `billingEnabled: true`)
+- [x] Neon spending limit set — **N/A on the Free Plan** (2026-07-25): the free tier has no billing attached and no Usage-Limits page; it hard-stops at the free allowance rather than charging, so runaway *spend* is not possible. Revisit if the project moves to a paid Neon plan.
 - [ ] Cloud Run `--max-instances` set to a finite number
 - [ ] Per-user daily quota enforced server-side and verified at the boundary
 - [ ] OpenRouter balance is only as large as you are willing to lose
