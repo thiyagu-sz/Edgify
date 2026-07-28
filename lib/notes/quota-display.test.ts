@@ -37,4 +37,42 @@ describe("quotaState", () => {
       expect(state.text).not.toMatch(/error|quota exceeded|limit reached/i);
     }
   });
+
+  /** The 80% line is the whole behaviour, so pin both sides of it exactly. */
+  it("switches on at exactly 80% used, not before", () => {
+    // limit 10: 2 remaining is exactly 80% used → show; 3 remaining is 70% → hide.
+    expect(quotaState(3, 10).show).toBe(false);
+    expect(quotaState(2, 10).show).toBe(true);
+
+    // limit 30: 6 remaining is exactly 80% → show; 7 remaining is ~76.7% → hide.
+    expect(quotaState(7, 30).show).toBe(false);
+    expect(quotaState(6, 30).show).toBe(true);
+  });
+
+  it("treats a nonsensical limit as unknown rather than guessing", () => {
+    expect(quotaState(5, 0).show).toBe(false);
+    expect(quotaState(5, -1).show).toBe(false);
+  });
+
+  it("stays in the exhausted state if remaining goes negative", () => {
+    // A race between two in-flight generations can overshoot; it must not read as "-1 left".
+    const state = quotaState(-1, 30);
+    expect(state).toMatchObject({ show: true, exhausted: true });
+    if (state.show) expect(state.text).not.toContain("-1");
+  });
+
+  it("handles a limit of one", () => {
+    expect(quotaState(1, 1).show).toBe(false); // 0% used
+    expect(quotaState(0, 1)).toMatchObject({ show: true, exhausted: true });
+  });
+
+  it("never phrases any state as an error, at any level", () => {
+    for (let remaining = -2; remaining <= 30; remaining++) {
+      const state = quotaState(remaining, 30);
+      if (!state.show) continue;
+      expect(state.text, `remaining=${remaining}`).not.toMatch(
+        /error|exceeded|denied|forbidden|limit reached|too many/i,
+      );
+    }
+  });
 });

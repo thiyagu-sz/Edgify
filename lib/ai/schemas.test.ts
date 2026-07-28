@@ -32,6 +32,62 @@ describe("sanitizeQuiz", () => {
     expect(sanitizeQuiz("not json")).toBeNull();
     expect(sanitizeQuiz({})).toBeNull();
   });
+
+  /**
+   * The shapes models actually return when they drift. Each must resolve to either a usable quiz
+   * or null — never a partially-valid object, because that renders as a broken page and a broken
+   * page reads as a broken product (docs/04 §3).
+   */
+  describe("malformed shapes degrade to null or a usable subset", () => {
+    const cases: [string, unknown][] = [
+      ["empty questions array", { questions: [] }],
+      ["questions not an array", { questions: "five of them" }],
+      ["missing questions key", { items: [] }],
+      ["null", null],
+      ["a JSON string rather than an object", '{"questions":[]}'],
+      ["question missing options", { questions: [{ q: "Q", answer: 0, explanation: "" }] }],
+      ["question with a single option", { questions: [{ q: "Q", options: ["only"], answer: 0 }] }],
+      ["non-integer answer", { questions: [{ q: "Q", options: ["a", "b"], answer: 1.5 }] }],
+      ["negative answer", { questions: [{ q: "Q", options: ["a", "b"], answer: -1 }] }],
+      ["answer as a string", { questions: [{ q: "Q", options: ["a", "b"], answer: "1" }] }],
+      ["empty question text", { questions: [{ q: "", options: ["a", "b"], answer: 0 }] }],
+      ["empty option text", { questions: [{ q: "Q", options: ["a", ""], answer: 0 }] }],
+      ["options containing null", { questions: [{ q: "Q", options: ["a", null], answer: 0 }] }],
+    ];
+
+    for (const [name, raw] of cases) {
+      it(name, () => {
+        const result = sanitizeQuiz(raw);
+        if (result === null) return; // a clean tier failure — the ladder continues
+        // Otherwise every surviving question must be fully renderable.
+        expect(result.questions.length).toBeGreaterThan(0);
+        for (const question of result.questions) {
+          expect(question.q.length).toBeGreaterThan(0);
+          expect(question.options.length).toBeGreaterThanOrEqual(2);
+          expect(Number.isInteger(question.answer)).toBe(true);
+          expect(question.answer).toBeGreaterThanOrEqual(0);
+          expect(question.answer).toBeLessThan(question.options.length);
+          expect(typeof question.explanation).toBe("string");
+        }
+      });
+    }
+  });
+
+  it("keeps the good questions when only some are broken", () => {
+    const quiz = sanitizeQuiz({
+      questions: [
+        { q: "keep 1", options: ["a", "b"], answer: 0, explanation: "" },
+        { q: "drop", options: ["a", "b"], answer: 7, explanation: "" },
+        { q: "keep 2", options: ["a", "b", "c"], answer: 2, explanation: "" },
+      ],
+    });
+    expect(quiz?.questions.map((q) => q.q)).toEqual(["keep 1", "keep 2"]);
+  });
+
+  it("defaults a missing explanation rather than rejecting the question", () => {
+    const quiz = sanitizeQuiz({ questions: [{ q: "Q", options: ["a", "b"], answer: 0 }] });
+    expect(quiz?.questions[0].explanation).toBe("");
+  });
 });
 
 describe("sanitizeGraph", () => {
