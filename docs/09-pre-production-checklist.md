@@ -30,9 +30,9 @@ grep -r "sk-or-v1" .next/static/ && echo "LEAK — DO NOT DEPLOY" || echo "clean
 grep -rn "NEXT_PUBLIC_.*\(OPENROUTER\|API_KEY\|SECRET\)" . --include="*.ts" --include="*.tsx"
 ```
 
-- [ ] No key string anywhere in `.next/static/`
+- [x] No key string anywhere in `.next/static/` — verified 2026-07-28 against the Phase 4 production build. Scanned all 36 client files for the **values** of `OPENROUTER_API_KEY`, `DATABASE_URL`, `BETTER_AUTH_SECRET` and `GOOGLE_CLIENT_SECRET`: none present. Note the identifier `BETTER_AUTH_SECRET` *does* appear, inside better-auth's own lazy env accessor (`get BETTER_AUTH_SECRET(){return c("BETTER_AUTH_SECRET")}`) — a name, not a value, and `process.env` has no such key in a browser. This is the false positive this section warns about; scan for values.
 - [ ] No secret has a `NEXT_PUBLIC_` prefix
-- [ ] Browser network tab shows **zero** requests to `openrouter.ai` — every model call goes through your own `/api/*` routes
+- [x] Browser network tab shows **zero** requests to `openrouter.ai` — verified 2026-07-28 in Chromium, asserted programmatically over every request during generation in all three degradation runs (`test/e2e/degradation-proof.mjs`)
 - [ ] `git log -p | grep -i "sk-or-v1"` finds nothing. If a key was ever committed, **rotate it**; deleting the file does not remove it from history
 
 ### 1.2 Cross-user data isolation
@@ -61,10 +61,10 @@ containing injected instructions, a classmate uploads it, the model echoes the p
 runs in the classmate's browser. The shared deduplication cache means a poisoned result can
 then be served to anyone who uploads that same file.
 
-- [ ] All rendered model output passes through a sanitiser (DOMPurify, or `marked` configured to escape HTML) before reaching `dangerouslySetInnerHTML`
-- [ ] Test it: feed a document containing `<img src=x onerror="alert(1)">` and `<script>alert(1)</script>` through every format. Nothing executes
-- [ ] Quiz options, concept names, and graph node labels are escaped — they are model output too, and they render as SVG text and HTML attributes
-- [ ] A filename used as a document title is escaped before rendering
+- [x] All rendered model output passes through a sanitiser before reaching `dangerouslySetInnerHTML` — `lib/sanitize.ts` is the single chokepoint (marked → DOMPurify), used by both the on-screen prose and the `.doc` export. It uses an explicit **allowlist** of the tags the prototype's `.prose` rules style, not DOMPurify's defaults, because the default profile permits `<style>`; `<img>` is excluded outright, which removes the `img onerror` class of vector at the root. It also fails closed without a DOM (escapes rather than returning raw HTML).
+- [x] Test it: feed a document containing `<img src=x onerror="alert(1)">` and `<script>alert(1)</script>` through every format. Nothing executes — verified 2026-07-28. A 14-payload corpus (`test/xss-payloads.ts`, including three mutation-XSS vectors) is run through: every one of the 8 notes formats in the mounted component; every render surface (streaming prose, buffered prose, demo banner, quiz question/option/explanation, DOC and PDF export); **every prefix** of a split payload, because streaming re-renders truncated markdown that buffered tests never produce; and the real Chromium parser, since jsdom's parser is not Chrome's and mXSS is a parser-differential attack. Assertions are DOM-based with a `window.__xss` sentinel, and a negative control (`test/xss-payloads.test.ts`) runs the corpus through the *unsanitised* renderer to prove the checker can actually fail.
+- [x] Quiz options, concept names, and graph node labels are escaped — quiz text is React-escaped and asserted to render as literal text (`components/notes/quick-notes.sanitize.test.tsx`). **Graph node labels and SVG `<text>` are NOT yet covered — the graph is Phase 5.**
+- [ ] A filename used as a document title is escaped before rendering — **Phase 5** (no upload path exists yet; the export *title* is escaped, `lib/export.test.ts`)
 
 ### 1.4 Billing cannot run away
 
@@ -202,6 +202,41 @@ For each row: induce the failure, confirm the user-facing result, then restore.
 - [ ] Every row produces a calm user-facing state
 - [ ] **No row produces a stack trace, an HTTP code, or a vendor name on screen**
 - [ ] Every row writes a ledger entry with the right `tier` and `outcome`
+
+#### Phase 4 failure-injection results (2026-07-28, Quick Notes only)
+
+Run with `test/e2e/degradation-proof.mjs` against a **production build**, breaking the config for
+real — no stubbed routes, no test-only branches. Screenshots in `.artifacts/degradation/`.
+
+| Row | Result |
+|---|---|
+| All models unavailable (every model id nonsense) | **PASS** — demo content + visible banner in 4.7s; exports and regenerate still live; nothing forbidden on screen; zero browser requests to the provider |
+| Invalid API key | **PASS after a fix** (see below) — demo content + banner in 2.6s, and the 401 alert now fires |
+| Quota exhausted (`QUOTA_DAILY_LIMIT=1`) | **PASS** — quota banner over a worked example in 1.4s, quiet counter beside the button, no error styling |
+
+**Two real defects were found by this, both invisible to every mocked test**, because the mocks
+threw a bare `APICallError` and the SDK does not:
+
+1. **A 401 was retried 7 times and never alerted.** On an auth failure the AI SDK's `textStream`
+   does not throw — it yields zero chunks and closes cleanly; `totalUsage` rejects with a generic
+   `AI_NoOutputGeneratedError` carrying no status; and the `APICallError` with `statusCode: 401`
+   reaches the `onError` callback alone. The ladder therefore saw an *empty stream*, classified it
+   as a retryable empty result, and burned the whole 3+2+2 attempt budget on a key that could
+   never work — with no operator alert, when docs/04 §1 says a 401 is non-retryable and must be
+   alerted on. Fixed in `lib/ai/models.ts` (re-raise the captured transport error when the stream
+   produced nothing) and `lib/ai/generate.ts` (`classify` now unwraps `cause` chains).
+   Measured before → after: **7 attempts / 0 alerts / 4908ms → 3 attempts (one per model) /
+   3 alerts carrying `status: 401` / 2572ms.**
+2. **Seven unhandled promise rejections per failed generation.** Each abandoned attempt left its
+   `usage` promise unobserved — a process-stability risk on Cloud Run, not just log noise. Fixed
+   by marking it handled at the seam. Measured **7 → 0**.
+
+Regression coverage: `lib/ai/error-classification.test.ts`, which also pins the surprising SDK
+contract above so a future version cannot change it silently.
+
+Not yet exercised (deferred): 402, rate-limit storm, database unreachable, Neon cold start, and
+the slow-model timeout at the server (the *client* 45s deadline is covered in
+`components/notes/quick-notes.resilience.test.tsx`).
 
 ### 3.2 Load and capacity
 

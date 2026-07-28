@@ -426,13 +426,28 @@ function isMalformed(err: unknown): boolean {
   return err instanceof MalformedOutputError || NoObjectGeneratedError.isInstance(err);
 }
 
+/**
+ * Find the `APICallError` in an error chain. SDK layers wrap transport failures, so the status
+ * code the ladder classifies by is often one or two `cause` hops down. Missing it means a 401 or
+ * 402 is treated as an unknown error and retried — the opposite of what docs/04 §1 requires.
+ */
+function findApiCallError(err: unknown): APICallError | undefined {
+  let current = err;
+  for (let depth = 0; depth < 5 && current != null; depth++) {
+    if (APICallError.isInstance(current)) return current;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 function classify(err: unknown): Classification {
   if (isMalformed(err)) return "malformed";
-  if (APICallError.isInstance(err)) {
-    const status = err.statusCode;
+  const apiError = findApiCallError(err);
+  if (apiError) {
+    const status = apiError.statusCode;
     if (status === 429 || (typeof status === "number" && status >= 500)) return "retry";
     if (status === 402 || status === 401 || status === 400) return "stop";
-    return err.isRetryable ? "retry" : "stop";
+    return apiError.isRetryable ? "retry" : "stop";
   }
   // Network/timeout-style errors without a status → one bounded retry, then next tier.
   return "retry";
@@ -452,6 +467,6 @@ function backoff(attempt: number, err: unknown, random: () => number): number {
 
 function logNonRetryable(err: unknown): void {
   // 401 (bad key) and 400 (our bug) are config errors worth alerting on (docs/04 §1, §8).
-  const status = APICallError.isInstance(err) ? err.statusCode : undefined;
+  const status = findApiCallError(err)?.statusCode;
   log.error("model call: non-retryable error", err, { status });
 }

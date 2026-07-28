@@ -111,13 +111,53 @@ The heart of the system. Build it once, properly.
 - Quota display in the UI
 
 **Acceptance criteria**
-- [ ] Side-by-side with `trellis-prototype.html`, the UI is visually indistinguishable
-- [ ] Tokens stream progressively; first token within ~2 seconds
-- [ ] All nine formats produce sensible output
-- [ ] Quiz scores correctly and shows explanations
-- [ ] PDF and DOC exports open correctly in a reader and in Word
-- [ ] Approaching quota shows the counter; reaching it shows the friendly state
-- [ ] Demo banner appears when the ladder falls through
+- [x] Side-by-side with `trellis-prototype.html`, the UI is visually indistinguishable
+- [~] Tokens stream progressively; first token within ~2 seconds — streaming yes, ~2s **not met**
+- [x] All ~~nine~~ **eight** formats produce sensible output
+- [x] Quiz scores correctly and shows explanations
+- [~] PDF and DOC exports open correctly in a reader and in Word — PDF yes, Word **unverified**
+- [x] Approaching quota shows the counter; reaching it shows the friendly state
+- [x] Demo banner appears when the ladder falls through
+
+#### Phase 4 results (2026-07-28)
+
+**Visual fidelity — met.** `test/e2e/visual-diff.mjs` drives the prototype and the app to the
+same seven states with the same fixtures and pixel-diffs the Quick Notes region at 1440×900 and
+1280×800. Worst state **0.197%** differing pixels; most at 0.02–0.09%; prose and loading states
+are pixel-identical apart from the constant floor. Three deliberate deviations, printed by every
+run: the disabled "Upload file" link (Phase 5, and the ~170px floor in every state); the
+error-state heading, where the prototype uses one generic title for every failure and the app
+uses the specific docs/04 §7 catalogue title; and textarea scroll offset after "Load sample",
+normalised before capture. Getting here required one real fix — Tailwind's preflight sets
+`line-height: inherit` on buttons where the prototype leaves it `normal`, making every format
+chip 4.25px taller and pushing everything below down 8.5px (found by measuring element geometry,
+`test/e2e/measure-geometry.mjs`, not by guessing).
+
+**Formats — eight, not nine.** The prototype defines eight (`FORMATS`, proto:848-865) and so does
+`lib/ai/prompts.ts`. The "nine" above was wrong; no ninth was invented. All eight verified against
+the live model, checked for shape rather than wording (`test/e2e/all-formats.mjs`): 8/8.
+
+**First token — NOT met.** Measured against a production build, n=10, cache-busted
+(`test/e2e/first-token-latency.mjs`): **median 2958ms, min 2014ms, p95 12735ms.** Attribution:
+~811ms is our three sequential Neon round trips before the model is called (session, cache,
+quota — 270ms each), ~2147ms is provider time-to-first-token plus app overhead. So the free model
+alone roughly consumes the whole budget; even with a free database the median would sit near
+2.1s. The per-query RTT here is network distance (local server → `us-east-2` Neon), which would be
+single-digit ms co-located — but production has not been measured, so that explains the number
+rather than excusing it. **This is a measurement, deliberately not a CI gate**; the structural
+property that makes ~2s *achievable* — the route flushing its first byte before the generation
+completes — is gated deterministically in `app/api/notes/generate/route.test.ts`. Note this
+contradicts the "~1.2s streaming first token" recorded in `lib/env.ts` on 2026-07-27; that figure
+should be treated as stale.
+
+Progressive streaming itself is confirmed in a real browser: 100 DOM updates across 85 distinct
+lengths for one generation, first paint measured client-side.
+
+**Exports.** PDF verified by inspecting the generated artifact (correct `%PDF-` header, text
+present, no `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/AA` or scripted `/OpenAction`);
+the W7 `</body>` trap is covered. **The `.doc` opening correctly in Word is unverified** — Word is
+not available in this environment. The blob is Word-compatible HTML and is asserted inert, but
+someone should open one before launch.
 
 ---
 

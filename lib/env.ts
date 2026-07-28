@@ -78,7 +78,10 @@ const envSchema = z.object({
   // a retirement is a config change, not an outage (docs/02-tech-stack.md). Prefer a
   // NON-reasoning instruct model: a reasoning model doubles free-quota token spend on a
   // summarisation task and hides the first content token behind its reasoning phase (measured).
-  // Verified live 2026-07-27 (reasoning_tokens=0, ~1.2s streaming first token).
+  // Verified live 2026-07-27 (reasoning_tokens=0). The "~1.2s first token" noted then did NOT
+  // reproduce: measured 2026-07-28 over n=10 against a production build, median first byte was
+  // 2958ms end to end, of which ~2.1s is provider TTFT (docs/06 Phase 4 results). Treat free-tier
+  // latency as variable — p95 was 12.7s — and re-measure before relying on a figure.
   OPENROUTER_FREE_MODEL: z.string().min(1).default("google/gemma-4-26b-a4b-it:free"),
   // Comma-separated additional free ids tried before falling to the paid tier — a different
   // provider (InclusionAI) so a Google-side rotation/429 doesn't take the free tier down. Kept to

@@ -62,4 +62,38 @@ describe("quota", () => {
     expect(results.filter((r) => r.allowed).length).toBe(limit);
     expect((await getRemaining(u, { limit })).remaining).toBe(0);
   });
+
+  /**
+   * The UI polls `getRemaining` after every generation to refresh the counter. If reading cost a
+   * generation, looking at your allowance would spend it and the counter would race itself to
+   * zero. Asserted against the real table rather than a mock, because the guarantee is about
+   * what the SQL does.
+   */
+  it("getRemaining never consumes, however often it is called", async () => {
+    const u = await createTestUser();
+    const limit = 10;
+    await consumeQuota(u, { limit });
+
+    const before = await getRemaining(u, { limit });
+    expect(before.remaining).toBe(9);
+
+    for (let i = 0; i < 20; i++) {
+      expect((await getRemaining(u, { limit })).remaining).toBe(9);
+    }
+
+    // And the next real generation still gets its full turn.
+    expect(await consumeQuota(u, { limit })).toMatchObject({ allowed: true, remaining: 8 });
+  });
+
+  it("getRemaining reports a full allowance for a user with no row yet", async () => {
+    const u = await createTestUser();
+    const limit = 10;
+    // Reading before any generation must not create a counter row or imply usage.
+    expect(await getRemaining(u, { limit })).toMatchObject({
+      allowed: true,
+      remaining: 10,
+      limit: 10,
+    });
+    expect(await consumeQuota(u, { limit })).toMatchObject({ allowed: true, remaining: 9 });
+  });
 });
