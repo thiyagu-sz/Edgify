@@ -1,0 +1,516 @@
+"use client";
+
+import { useCallback, useRef, useState } from "react";
+import { FORMATS, getFormat } from "@/lib/ai/prompts";
+import { sanitizeQuiz, type Quiz } from "@/lib/ai/schemas";
+import { exportDoc, exportPdf, quizToMarkdown } from "@/lib/export";
+import { quotaState } from "@/lib/notes/quota-display";
+import { renderMarkdown } from "@/lib/sanitize";
+
+/**
+ * Quick Notes — the interactive workspace island (W2, docs/05), a faithful React port of the
+ * prototype's Quick Notes UI (docs/reference/trellis-prototype.html). The prototype called the
+ * model from the browser; here every generation goes through POST /api/notes/generate, which
+ * owns the key, the ladder and the ledger (AGENTS.md #1/#3). Markdown streams; quizzes come back
+ * validated. Model output is sanitised before render (renderMarkdown); quiz text is React-escaped.
+ */
+
+/** The prototype's sample source text — used by "Load sample" so the user can try it instantly. */
+const SAMPLE =
+  "Neural networks learn by adjusting the strengths of connections between artificial neurons until their outputs match the desired targets. A network is organised into layers: an input layer receives the data, one or more hidden layers transform it, and an output layer produces the prediction. Each connection carries a weight, and each neuron computes a weighted sum of its inputs followed by a nonlinear activation function, which allows the network to represent complex, nonlinear relationships.\n\nTraining relies on a loss function that measures how far the network's predictions fall from the correct answers, and the goal is to minimise this loss. The backpropagation algorithm computes how much each weight contributed to the error by applying the chain rule of calculus, propagating gradients backward from the output layer to the input layer. An optimiser such as gradient descent then updates every weight a small step in the direction that reduces the loss.\n\nRepeating this process over many examples gradually improves the network's accuracy. The learning rate controls the size of each update: too large and training becomes unstable, too small and it converges slowly.";
+
+const MIN_CHARS = 200;
+const STREAM_TIMEOUT_MS = 45_000;
+
+type Notice = "demo" | "quota" | null;
+
+type OutState =
+  | { kind: "empty" }
+  | { kind: "loading"; label: string }
+  | { kind: "prose"; md: string; notice: Notice; streaming: boolean; chars: number; label: string }
+  | { kind: "quiz"; quiz: Quiz; notice: Notice; chars: number; label: string; genId: number }
+  | { kind: "error"; title: string; message: string };
+
+export function QuickNotes({
+  initialRemaining,
+  initialLimit,
+}: {
+  initialRemaining: number | null;
+  initialLimit: number | null;
+}) {
+  const [text, setText] = useState("");
+  const [formatId, setFormatId] = useState(FORMATS[0].id);
+  const [out, setOut] = useState<OutState>({ kind: "empty" });
+  const [remaining, setRemaining] = useState(initialRemaining);
+  const [limit, setLimit] = useState(initialLimit);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const genIdRef = useRef(0);
+
+  const format = getFormat(formatId) ?? FORMATS[0];
+
+  const refreshQuota = useCallback(async () => {
+    try {
+      const res = await fetch("/api/usage", { cache: "no-store" });
+      if (!res.ok) return;
+      const body = (await res.json()) as { remaining: number | null; limit: number | null };
+      setRemaining(body.remaining ?? null);
+      setLimit(body.limit ?? null);
+    } catch {
+      // The counter is a nicety; ignore a failed refresh.
+    }
+  }, []);
+
+  const generate = useCallback(async () => {
+    const content = text.trim();
+    const fmt = getFormat(formatId) ?? FORMATS[0];
+    if (content.length < MIN_CHARS) {
+      setOut({
+        kind: "error",
+        title: "Not enough text yet",
+        message: "There isn't enough text here to work with. Add a few paragraphs.",
+      });
+      return;
+    }
+
+    const chars = content.length;
+    const genId = ++genIdRef.current;
+    setOut({ kind: "loading", label: `Generating ${fmt.label.toLowerCase()}…` });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+    try {
+      const res = await fetch("/api/notes/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: content, format: fmt.id }),
+        signal: controller.signal,
+      });
+      const kind = res.headers.get("X-Trellis-Kind");
+
+      if (kind === "stream" && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let md = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          md += decoder.decode(value, { stream: true });
+          setOut({ kind: "prose", md, notice: null, streaming: true, chars, label: fmt.label });
+        }
+        md += decoder.decode();
+        setOut({ kind: "prose", md, notice: null, streaming: false, chars, label: fmt.label });
+        await refreshQuota();
+        return;
+      }
+
+      const body = (await res.json().catch(() => ({}))) as {
+        data?: unknown;
+        notice?: Notice;
+        message?: string;
+      };
+
+      if (kind === "final") {
+        if (fmt.mode === "quiz") {
+          const quiz = sanitizeQuiz(body.data);
+          if (!quiz) {
+            setOut({
+              kind: "error",
+              title: "Unexpected quiz format",
+              message: "The quiz came back in an unexpected format. Try generating it again.",
+            });
+          } else {
+            setOut({ kind: "quiz", quiz, notice: body.notice ?? null, chars, label: fmt.label, genId });
+          }
+        } else {
+          const md = typeof body.data === "string" ? body.data : "";
+          setOut({ kind: "prose", md, notice: body.notice ?? null, streaming: false, chars, label: fmt.label });
+        }
+        await refreshQuota();
+      } else if (kind === "busy") {
+        setOut({
+          kind: "error",
+          title: "The server is busy",
+          message: body.message ?? "Server is busy, please try again in a moment.",
+        });
+      } else if (kind === "auth") {
+        setOut({
+          kind: "error",
+          title: "Session expired",
+          message: body.message ?? "Please sign in again to continue.",
+        });
+      } else {
+        setOut({
+          kind: "error",
+          title: "Something went wrong",
+          message: body.message ?? "Something went wrong on our side. Please try again in a moment.",
+        });
+      }
+    } catch {
+      // Abort/timeout or network drop. Keep any partial stream; otherwise show the calm busy state.
+      setOut((prev) =>
+        prev.kind === "prose" && prev.md.trim().length > 0
+          ? { ...prev, streaming: false }
+          : {
+              kind: "error",
+              title: "The server is busy",
+              message: "Server is busy, please try again in a moment.",
+            },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }, [text, formatId, refreshQuota]);
+
+  function loadSample() {
+    setText(SAMPLE);
+    textRef.current?.focus();
+  }
+
+  function onTextKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void generate();
+    }
+  }
+
+  const currentMarkdown = useCallback((): string => {
+    if (out.kind === "prose") return out.md;
+    if (out.kind === "quiz") return quizToMarkdown(out.label, out.quiz.questions);
+    return "";
+  }, [out]);
+
+  const quota = quotaState(remaining, limit);
+  const busy = out.kind === "loading";
+
+  return (
+    <div className="qn-grid">
+      {/* ── Input ─────────────────────────────────────────────────────────── */}
+      <div className="card qn-input">
+        <div className="qn-label">
+          Source material
+          <div className="qn-actions">
+            {/* Upload/extraction lands in Phase 5 (W3); inert for now. */}
+            <button className="link" type="button" disabled title="File upload arrives soon — paste text for now">
+              <IconUpload /> Upload file
+            </button>
+            <button className="link" type="button" onClick={loadSample}>
+              <IconSample /> Load sample
+            </button>
+          </div>
+        </div>
+        <textarea
+          ref={textRef}
+          className="paste"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onTextKeyDown}
+          placeholder="Paste your notes, a textbook section, or an article — or upload a PDF, DOCX, TXT or MD file above…"
+        />
+        <div className="char">{text.length.toLocaleString()} characters</div>
+        <div className="fmt-label">Revision format</div>
+        <div className="format-chips">
+          {FORMATS.map((f) => (
+            <button
+              key={f.id}
+              className="fmt"
+              type="button"
+              aria-pressed={f.id === formatId}
+              onClick={() => setFormatId(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="fmt-desc">{format.desc}</div>
+        <div className="gen-row">
+          <button className="btn-primary" type="button" onClick={() => void generate()} disabled={busy}>
+            <IconArrow /> Generate revision notes
+          </button>
+          <div className="gen-hint">
+            or press <kbd>⌘ Enter</kbd>
+          </div>
+          {quota.show && (
+            <div className={`quota-note${quota.exhausted ? " exhausted" : ""}`}>{quota.text}</div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Output ────────────────────────────────────────────────────────── */}
+      <div className="card qn-output">
+        {out.kind === "empty" && <EmptyState />}
+        {out.kind === "loading" && <LoadingState label={out.label} />}
+        {out.kind === "error" && (
+          <ErrorState title={out.title} message={out.message} onRetry={() => void generate()} />
+        )}
+        {(out.kind === "prose" || out.kind === "quiz") && (
+          <>
+            <OutputHead
+              label={out.label}
+              chars={out.chars}
+              showCopy={out.kind === "prose"}
+              onCopy={() => void navigator.clipboard?.writeText(currentMarkdown())}
+              onPdf={() => exportPdf(`Trellis — ${out.label}`, currentMarkdown())}
+              onDoc={() => exportDoc(`Trellis — ${out.label}`, currentMarkdown())}
+              onRegenerate={() => void generate()}
+            />
+            <div className="out-body">
+              {out.notice && <NoticeBanner notice={out.notice} />}
+              {out.kind === "prose" ? (
+                // Sanitised at the single chokepoint (lib/sanitize) before this innerHTML.
+                <div
+                  className="prose"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(out.md) }}
+                />
+              ) : (
+                <QuizView key={out.genId} quiz={out.quiz} />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Interactive quiz with live scoring (prototype `renderQuizOutput`). Text is React-escaped. */
+function QuizView({ quiz }: { quiz: Quiz }) {
+  const [answers, setAnswers] = useState<(number | null)[]>(() => quiz.questions.map(() => null));
+  const total = quiz.questions.length;
+  const answered = answers.filter((a) => a !== null).length;
+  const correct = answers.reduce<number>(
+    (n, a, i) => (a !== null && a === quiz.questions[i].answer ? n + 1 : n),
+    0,
+  );
+
+  return (
+    <>
+      <div className="quiz-score">
+        <span>{answered === total ? "Final score" : "Quiz progress"}</span>
+        <span className="rs">
+          {correct} / {total}
+        </span>
+      </div>
+      {quiz.questions.map((q, qi) => {
+        const sel = answers[qi];
+        const done = sel !== null;
+        return (
+          <div className="quiz-q" key={qi}>
+            <div className="qnum">Question {qi + 1}</div>
+            <div className="q-q">{q.q}</div>
+            <div className="q-opts">
+              {q.options.map((opt, oi) => {
+                const cls = done ? (oi === q.answer ? "correct" : oi === sel ? "wrong" : "") : "";
+                return (
+                  <button
+                    key={oi}
+                    className={`q-opt${cls ? ` ${cls}` : ""}`}
+                    type="button"
+                    disabled={done}
+                    onClick={() =>
+                      setAnswers((prev) => {
+                        if (prev[qi] !== null) return prev;
+                        const next = [...prev];
+                        next[qi] = oi;
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="k">{String.fromCharCode(65 + oi)}</span>
+                    {opt}
+                  </button>
+                );
+              })}
+            </div>
+            {done && (
+              <div className="q-fb">
+                <b>{sel === q.answer ? "Correct." : "Not quite."}</b> {q.explanation}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function NoticeBanner({ notice }: { notice: Exclude<Notice, null> }) {
+  return (
+    <div className="notice-banner" role="status">
+      <IconInfo />
+      {notice === "quota" ? (
+        <span>
+          <b>You&apos;ve used today&apos;s generations.</b> Here&apos;s a worked example in the
+          meantime. Your limit resets at midnight.
+        </span>
+      ) : (
+        <span>
+          <b>Showing sample content.</b> Live generation is temporarily unavailable, so this is a
+          prepared example. Your document is safe — try again in a few minutes.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function OutputHead({
+  label,
+  chars,
+  showCopy,
+  onCopy,
+  onPdf,
+  onDoc,
+  onRegenerate,
+}: {
+  label: string;
+  chars: number;
+  showCopy: boolean;
+  onCopy: () => void;
+  onPdf: () => void;
+  onDoc: () => void;
+  onRegenerate: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="out-head">
+      <div className="ot">
+        {label} <span className="badge">from {chars.toLocaleString()} chars</span>
+      </div>
+      <div className="out-tools">
+        {showCopy && (
+          <button
+            type="button"
+            onClick={() => {
+              onCopy();
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+          >
+            {copied ? <IconCheck /> : <IconCopy />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        )}
+        <button type="button" onClick={onPdf}>
+          <IconDownload /> PDF
+        </button>
+        <button type="button" onClick={onDoc}>
+          <IconDownload /> DOC
+        </button>
+        <button type="button" onClick={onRegenerate}>
+          <IconRefresh /> Regenerate
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="empty">
+      <svg className="eglyph" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#111" strokeWidth="1.4" strokeLinecap="round" />
+        <line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#111" strokeWidth="1.4" strokeLinecap="round" />
+        <line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#111" strokeWidth="1.4" strokeLinecap="round" />
+        <circle cx="12" cy="5.5" r="2.4" fill="#111" />
+        <circle cx="5.5" cy="17.5" r="2.4" fill="#111" />
+        <circle cx="18.5" cy="17.5" r="2.4" fill="#111" />
+      </svg>
+      <h3>Your revision notes will appear here</h3>
+      <p>Paste or upload material and choose a format to generate.</p>
+    </div>
+  );
+}
+
+function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="loading">
+      <div className="spin" />
+      <p>{label}</p>
+    </div>
+  );
+}
+
+function ErrorState({
+  title,
+  message,
+  onRetry,
+}: {
+  title: string;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="errbox">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+        <path d="M12 8v5M12 16.5v.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      <h3>{title}</h3>
+      <p>{message}</p>
+      <button className="btn-secondary" type="button" onClick={onRetry}>
+        <span>Try again</span>
+      </button>
+    </div>
+  );
+}
+
+/* ── Icons (ported from the prototype) ─────────────────────────────────────── */
+function IconUpload() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 16V4M12 4l-5 5M12 4l5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 17v2a1 1 0 001 1h12a1 1 0 001-1v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+function IconSample() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M14 3v5h5M6 3h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function IconArrow() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function IconCopy() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+function IconCheck() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function IconDownload() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 15V4M12 15l-4-4M12 15l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 19h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+function IconRefresh() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 12a8 8 0 0113.5-5.7L20 8M20 12a8 8 0 01-13.5 5.7L4 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function IconInfo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 11v5M12 8v.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}

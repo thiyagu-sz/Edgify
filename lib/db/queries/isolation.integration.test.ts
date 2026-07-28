@@ -8,6 +8,7 @@ import {
   listDocuments,
 } from "./documents";
 import { readLedger, recordLedger } from "./ledger";
+import { createNote, getNote, listNotes } from "./notes";
 
 // `import.meta.glob` is a Vite/Vitest feature statically replaced at transform time (so it must
 // be called by its full name). Type it here since the app tsconfig doesn't load vite/client.
@@ -59,9 +60,15 @@ const CASE_NAMES = [
   "documents.countUserDocuments",
   "documents.deleteDocument",
   "ledger.readLedger",
+  "notes.getNote",
+  "notes.listNotes",
 ];
 // Writers that only ever create rows under the caller's own userId — no cross-user read path.
-const WRITER_ALLOWLIST = ["documents.createDocument", "ledger.recordLedger"];
+const WRITER_ALLOWLIST = [
+  "documents.createDocument",
+  "ledger.recordLedger",
+  "notes.createNote",
+];
 
 describe("cross-user isolation: documents", () => {
   it("getDocument: owner sees the row; the other user sees nothing", async () => {
@@ -108,6 +115,23 @@ describe("cross-user isolation: documents", () => {
     expect(rowsA.length).toBeGreaterThanOrEqual(1); // positive control
     expect(rowsA.every((r) => r.userId === ownerA)).toBe(true);
     expect(rowsB.some((r) => r.userId === ownerA)).toBe(false); // isolation
+  });
+
+  it("getNote: owner sees the note; the other user sees nothing", async () => {
+    const note = await createNote(A, { format: "key_points", contentMd: "secret notes" });
+    expect((await getNote(A, note.id))?.id).toBe(note.id); // positive control
+    expect(await getNote(B, note.id)).toBeUndefined(); // isolation
+  });
+
+  it("listNotes: each user sees only their own notes", async () => {
+    const noteA = await createNote(A, { format: "summary", contentMd: "A's notes" });
+    const noteB = await createNote(B, { format: "summary", contentMd: "B's notes" });
+    const idsA = (await listNotes(A)).map((n) => n.id);
+    const idsB = (await listNotes(B)).map((n) => n.id);
+    expect(idsA).toContain(noteA.id);
+    expect(idsA).not.toContain(noteB.id);
+    expect(idsB).toContain(noteB.id);
+    expect(idsB).not.toContain(noteA.id);
   });
 
   it("coverage guard: every exported query function has an isolation case or is an allowlisted writer", () => {

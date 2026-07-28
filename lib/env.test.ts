@@ -107,7 +107,11 @@ describe("Phase 3 AI-layer vars", () => {
     const env = parseEnv(validEnv());
     expect(env.OPENROUTER_FREE_MODEL).toMatch(/:free$/);
     expect(env.OPENROUTER_PAID_MODEL.length).toBeGreaterThan(0);
-    expect(env.OPENROUTER_FREE_FALLBACKS).toBe("");
+    // Ships at least one free-tier fallback so a single rotation doesn't drop to the paid tier;
+    // asserted by shape (every entry is a `:free` id), not exact id, since free ids rotate.
+    const fallbacks = env.OPENROUTER_FREE_FALLBACKS.split(",").filter(Boolean);
+    expect(fallbacks.length).toBeGreaterThan(0);
+    expect(fallbacks.every((id) => id.endsWith(":free"))).toBe(true);
     expect(env.PROMPT_VERSION).toBe("v1");
   });
 });

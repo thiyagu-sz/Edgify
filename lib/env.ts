@@ -75,10 +75,16 @@ const envSchema = z.object({
     .string()
     .min(1, "required — OpenRouter API key (server-only, never NEXT_PUBLIC_)"),
   // Model routing. Free-tier ids rotate on OpenRouter, so they live in env with fallbacks —
-  // a retirement is a config change, not an outage (docs/02-tech-stack.md).
-  OPENROUTER_FREE_MODEL: z.string().min(1).default("openai/gpt-oss-20b:free"),
-  // Comma-separated additional free ids tried before falling to the paid tier.
-  OPENROUTER_FREE_FALLBACKS: z.string().default(""),
+  // a retirement is a config change, not an outage (docs/02-tech-stack.md). Prefer a
+  // NON-reasoning instruct model: a reasoning model doubles free-quota token spend on a
+  // summarisation task and hides the first content token behind its reasoning phase (measured).
+  // Verified live 2026-07-27 (reasoning_tokens=0, ~1.2s streaming first token).
+  OPENROUTER_FREE_MODEL: z.string().min(1).default("google/gemma-4-26b-a4b-it:free"),
+  // Comma-separated additional free ids tried before falling to the paid tier — a different
+  // provider (InclusionAI) so a Google-side rotation/429 doesn't take the free tier down. Kept to
+  // ONE verified-live, non-reasoning id: most other free models today reason heavily (token burn,
+  // slow first token) or are saturated. The paid tier is the backstop beyond this (docs/04 §1).
+  OPENROUTER_FREE_FALLBACKS: z.string().default("inclusionai/ling-3.0-flash:free"),
   OPENROUTER_PAID_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
   // Bump to invalidate the generation cache when prompt templates change (docs/08 §prompts).
   PROMPT_VERSION: z.string().min(1).default("v1"),

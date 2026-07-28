@@ -8,8 +8,10 @@ import { consumeQuota } from "../quota";
 import {
   modelLadder,
   realRunModel,
+  realRunStream,
   type RunModel,
   type RunModelArgs,
+  type RunStream,
 } from "./models";
 import { buildNotesPrompt, getFormat, type NotesMode } from "./prompts";
 import { quizSchema, sanitizeQuiz } from "./schemas";
@@ -38,6 +40,14 @@ class MalformedOutputError extends Error {
   }
 }
 
+/** A stream that produced no content — treated as a retryable tier failure (like an empty result). */
+class EmptyStreamError extends Error {
+  constructor() {
+    super("Model produced an empty stream");
+    this.name = "EmptyStreamError";
+  }
+}
+
 export type GenerateNotice = "demo" | "quota" | null;
 
 export type GenerateInput = {
@@ -58,11 +68,25 @@ export type GenerateResult = {
 
 export type GenerateDeps = {
   runModel?: RunModel;
+  /** Streaming seam for markdown Quick Notes (generateNotesStream). Injected in tests. */
+  runStream?: RunStream;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   random?: () => number;
   demoFor?: (input: DemoInput) => unknown | null;
 };
+
+/**
+ * The result of a streaming Quick Notes generation.
+ *  - `final`  — no live streaming: a cache hit, the quota/demo/busy tail, or a quiz (buffered
+ *               JSON). The route renders it immediately with any notice banner.
+ *  - `stream` — a live markdown generation. The route pipes `textStream` to the client; the
+ *               ladder has already committed this tier, and the stream writes the cache + ledger
+ *               row when it drains.
+ */
+export type NotesStreamResult =
+  | { kind: "final"; data: unknown; tier: GenerateResult["tier"]; notice: GenerateNotice }
+  | { kind: "stream"; tier: "free" | "paid"; textStream: AsyncIterable<string> };
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -163,6 +187,175 @@ export async function generate(
 
   // ── Tier 5/6: demo, else busy ───────────────────────────────────────────────
   return serveDemo(input, "demo", demoFor, elapsed);
+}
+
+/**
+ * Streaming Quick Notes generation (W2, docs/05). Same degradation ladder as `generate`, but
+ * markdown formats stream token-by-token so the first token reaches the user in ~2s (Phase 4
+ * acceptance). Quiz formats and every non-live outcome (cache / quota / demo / busy) come back
+ * as a buffered `final` — a half-streamed quiz is not useful, and the rest are instant anyway.
+ *
+ * This is the ONLY streaming entry point; it keeps the cache, quota, ladder and ledger inside
+ * this module (AGENTS.md rule 3) rather than in the route. The commit rule for streaming: pull
+ * the first non-empty token before returning, so a tier that fails at startup falls through
+ * invisibly; once tokens flow we are committed to that tier.
+ */
+export async function generateNotesStream(
+  input: GenerateInput,
+  deps: GenerateDeps = {},
+  opts: { signal?: AbortSignal } = {},
+): Promise<NotesStreamResult> {
+  const format = getFormat(input.format);
+
+  // Quiz (and any unknown format) → buffered path. `generate` owns cache/quota/ladder/demo for
+  // these; we just adapt its result. Streaming a quiz would ship an un-gradeable half-quiz.
+  if (!format || format.mode === "quiz") {
+    const result = await generate(input, deps);
+    return { kind: "final", data: result.data, tier: result.tier, notice: result.notice };
+  }
+
+  const runStream = deps.runStream ?? realRunStream;
+  const sleep = deps.sleep ?? defaultSleep;
+  const random = deps.random ?? Math.random;
+  const now = deps.now ?? Date.now;
+  const demoFor = deps.demoFor ?? demoContentFor;
+  const started = now();
+  const elapsed = () => now() - started;
+
+  const key = cacheKey(input.text, input.format, env.PROMPT_VERSION);
+
+  // ── Tier 0: cache hit ───────────────────────────────────────────────────────
+  const cached = await getCached(key);
+  if (cached !== null) {
+    await recordLedger(input.userId, {
+      operation: input.operation,
+      tier: "cache",
+      outcome: "ok",
+      tokensIn: 0,
+      tokensOut: 0,
+      latencyMs: elapsed(),
+    });
+    return { kind: "final", data: cached, tier: "cache", notice: null };
+  }
+
+  // ── Cache miss: consume quota. Over limit → demo with the quota banner ──────
+  const quota = await consumeQuota(input.userId);
+  if (!quota.allowed) {
+    const demoResult = await serveDemo(input, "quota", demoFor, elapsed);
+    return { kind: "final", data: demoResult.data, tier: demoResult.tier, notice: demoResult.notice };
+  }
+
+  const { system, prompt } = buildNotesPrompt(input.format, input.text);
+
+  // ── Tiers 1–4: walk the ladder, streaming ───────────────────────────────────
+  const ladder = modelLadder();
+  let fellThrough = false;
+
+  for (const step of ladder) {
+    let retried = false;
+    for (let attempt = 0; attempt < step.maxAttempts; attempt++) {
+      try {
+        const { textStream, usage } = runStream({
+          modelId: step.modelId,
+          system,
+          prompt,
+          signal: opts.signal,
+        });
+        const iterator = textStream[Symbol.asyncIterator]();
+
+        // Pull the first non-empty token. A startup error rejects here → next tier; a stream
+        // that yields nothing is an empty result (a failure, docs/04 §3) → next tier.
+        let firstChunk = "";
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) throw new EmptyStreamError();
+          if (next.value.length > 0) {
+            firstChunk = next.value;
+            break;
+          }
+        }
+
+        const outcome: LedgerOutcome = fellThrough ? "fallback" : retried ? "retried" : "ok";
+        const textStreamOut = commitStream({
+          userId: input.userId,
+          operation: input.operation,
+          key,
+          modelId: step.modelId,
+          tier: step.tier,
+          outcome,
+          firstChunk,
+          iterator,
+          usage,
+          elapsed,
+        });
+        return { kind: "stream", tier: step.tier, textStream: textStreamOut };
+      } catch (err) {
+        const kind = classify(err);
+        if (kind === "retry") {
+          retried = true;
+          if (attempt < step.maxAttempts - 1) {
+            await sleep(backoff(attempt, err, random));
+            continue;
+          }
+          break; // attempts exhausted → next model
+        }
+        if (kind === "stop") logNonRetryable(err);
+        break; // "malformed"/"stop" → next model
+      }
+    }
+    fellThrough = true;
+  }
+
+  // ── Tier 5/6: demo, else busy ───────────────────────────────────────────────
+  const demoResult = await serveDemo(input, "demo", demoFor, elapsed);
+  return { kind: "final", data: demoResult.data, tier: demoResult.tier, notice: demoResult.notice };
+}
+
+/**
+ * Re-emit the committed stream (starting with the already-pulled first token), accumulating the
+ * full text, then write the cache and the ledger row once it drains. Failures here (e.g. a
+ * mid-stream disconnect) surface to the route, which has already sent partial content.
+ */
+async function* commitStream(args: {
+  userId: string;
+  operation: string;
+  key: string;
+  modelId: string;
+  tier: "free" | "paid";
+  outcome: LedgerOutcome;
+  firstChunk: string;
+  iterator: AsyncIterator<string>;
+  usage: Promise<{ tokensIn: number; tokensOut: number }>;
+  elapsed: () => number;
+}): AsyncGenerator<string> {
+  let accumulated = args.firstChunk;
+  yield args.firstChunk;
+  for (;;) {
+    const next = await args.iterator.next();
+    if (next.done) break;
+    accumulated += next.value;
+    yield next.value;
+  }
+
+  const finalText = accumulated.trim();
+  if (finalText.length > 0) {
+    await setCached(args.key, finalText);
+  }
+  let tokens = { tokensIn: 0, tokensOut: 0 };
+  try {
+    tokens = await args.usage;
+  } catch {
+    // Usage is best-effort telemetry; never fail a delivered generation over it.
+  }
+  await recordLedger(args.userId, {
+    operation: args.operation,
+    modelId: args.modelId,
+    tier: args.tier,
+    tokensIn: tokens.tokensIn,
+    tokensOut: tokens.tokensOut,
+    outcome: args.outcome,
+    latencyMs: args.elapsed(),
+  });
 }
 
 /** One model attempt: call, validate, and on malformed content do exactly ONE repair. */

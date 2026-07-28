@@ -1,5 +1,5 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { generateObject, generateText } from "ai";
+import { generateObject, generateText, streamText } from "ai";
 import type { z } from "zod";
 import { env } from "../env";
 
@@ -67,4 +67,46 @@ export const realRunModel: RunModel = async ({ modelId, system, prompt, schema }
     tokensIn: usage.inputTokens ?? 0,
     tokensOut: usage.outputTokens ?? 0,
   };
+};
+
+// ── Streaming seam (markdown Quick Notes) ────────────────────────────────────
+export type RunStreamArgs = {
+  modelId: string;
+  system: string;
+  prompt: string;
+  /** Aborts the model call when the client disconnects. */
+  signal?: AbortSignal;
+};
+export type RunStreamResult = {
+  /** Progressive token stream. Iterating rejects (or ends empty) on a model failure. */
+  textStream: AsyncIterable<string>;
+  /** Resolves once the stream completes. Await only after draining `textStream`. */
+  usage: Promise<{ tokensIn: number; tokensOut: number }>;
+};
+
+/**
+ * The streaming counterpart to `RunModel`. Returns synchronously with a live `textStream`; the
+ * ladder in generate.ts drives it (pulls the first token to detect a tier failure before
+ * committing). Tests inject a fake that yields chunks or throws to force each tier.
+ */
+export type RunStream = (args: RunStreamArgs) => RunStreamResult;
+
+/**
+ * Real OpenRouter-backed streamer. `maxRetries: 0` — retry discipline is the ladder's job, not
+ * the SDK's (docs/04 §1). Never called from tests.
+ */
+export const realRunStream: RunStream = ({ modelId, system, prompt, signal }) => {
+  const result = streamText({
+    model: openrouter().chat(modelId),
+    system,
+    prompt,
+    maxRetries: 0,
+    abortSignal: signal,
+  });
+  // `totalUsage` is a PromiseLike; normalise to a real Promise for the RunStream contract.
+  const usage = Promise.resolve(result.totalUsage).then((u) => ({
+    tokensIn: u.inputTokens ?? 0,
+    tokensOut: u.outputTokens ?? 0,
+  }));
+  return { textStream: result.textStream, usage };
 };
