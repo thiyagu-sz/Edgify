@@ -1,6 +1,5 @@
-import DOMPurify from "dompurify";
 import { jsPDF } from "jspdf";
-import { marked } from "marked";
+import { renderMarkdown } from "./sanitize";
 
 /**
  * Client-side export, ported from docs/reference/trellis-prototype.html (W7, docs/05). No server
@@ -40,10 +39,13 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export function exportDoc(title: string, markdown: string): void {
-  // Sanitise the rendered body (the markdown is model output). DOMPurify also neutralises the
-  // W7 trap: a literal `</body>` inside model content can't prematurely close the document,
-  // because we build the string by concatenation and never splice around `</body>`.
-  const body = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
+  // Rendered through the SAME chokepoint as the on-screen prose (lib/sanitize). Keeping a second
+  // marked+DOMPurify pair here meant a second policy: this path used DOMPurify's defaults and so
+  // let <style> through into the exported document after the on-screen path had been tightened.
+  // A `.doc` outlives the session and is opened elsewhere, so it needs the stricter policy, not
+  // the laxer one. This also neutralises the W7 trap: a literal `</body>` in model content is
+  // escaped to text, and we build the wrapper by concatenation without splicing around it.
+  const body = renderMarkdown(markdown);
   const html =
     "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
     "body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#111;line-height:1.5}" +

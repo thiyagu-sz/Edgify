@@ -45,6 +45,8 @@ export function QuickNotes({
   const [limit, setLimit] = useState(initialLimit);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const genIdRef = useRef(0);
+  /** True for the whole of a generation, streaming included, so runs cannot overlap. */
+  const runningRef = useRef(false);
 
   const format = getFormat(formatId) ?? FORMATS[0];
 
@@ -61,6 +63,9 @@ export function QuickNotes({
   }, []);
 
   const generate = useCallback(async () => {
+    // A run in flight owns the output panel. Without this, ⌘Enter during a stream starts a
+    // second generation that races the first into the same state (and spends a second quota).
+    if (runningRef.current) return;
     const content = text.trim();
     const fmt = getFormat(formatId) ?? FORMATS[0];
     if (content.length < MIN_CHARS) {
@@ -74,6 +79,7 @@ export function QuickNotes({
 
     const chars = content.length;
     const genId = ++genIdRef.current;
+    runningRef.current = true;
     setOut({ kind: "loading", label: `Generating ${fmt.label.toLowerCase()}…` });
 
     const controller = new AbortController();
@@ -138,6 +144,14 @@ export function QuickNotes({
           title: "Session expired",
           message: body.message ?? "Please sign in again to continue.",
         });
+      } else if (kind === "message") {
+        // Something the user can fix (too short / too long). Not a server fault, so it must not
+        // read as one — docs/04 §7: say what happened, and offer the next action.
+        setOut({
+          kind: "error",
+          title: "Check the source material",
+          message: body.message ?? "There isn't enough text here to work with. Add a few paragraphs.",
+        });
       } else {
         setOut({
           kind: "error",
@@ -158,6 +172,7 @@ export function QuickNotes({
       );
     } finally {
       clearTimeout(timeout);
+      runningRef.current = false;
     }
   }, [text, formatId, refreshQuota]);
 
@@ -180,7 +195,9 @@ export function QuickNotes({
   }, [out]);
 
   const quota = quotaState(remaining, limit);
-  const busy = out.kind === "loading";
+  // Disabled for the whole run — the spinner AND the streaming phase. Re-enabling once the first
+  // token lands would invite a second generation on top of the one still writing.
+  const busy = out.kind === "loading" || (out.kind === "prose" && out.streaming);
 
   return (
     <div className="qn-grid">

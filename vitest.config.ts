@@ -11,9 +11,21 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
-          include: ["lib/**/*.test.ts", "app/**/*.test.ts"],
+          include: ["lib/**/*.test.ts", "app/**/*.test.ts", "test/**/*.test.ts"],
           exclude: ["**/*.integration.test.ts", "**/node_modules/**"],
           setupFiles: ["./test/setup-env.ts"],
+        },
+      },
+      {
+        resolve: { alias },
+        test: {
+          name: "component",
+          // React + DOM assertions: the UI acceptance criteria (sanitisation in the rendered
+          // DOM, quiz degradation, quota copy, the spinner-always-resolves invariant).
+          environment: "jsdom",
+          include: ["components/**/*.test.tsx", "app/**/*.test.tsx"],
+          exclude: ["**/node_modules/**"],
+          setupFiles: ["./test/setup-component.ts"],
         },
       },
       {

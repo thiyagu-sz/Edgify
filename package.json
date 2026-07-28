@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
+    "test:component": "vitest run --project component",
     "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
@@ -36,6 +37,10 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@testcontainers/postgresql": "^12.0.4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",

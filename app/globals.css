@@ -8,21 +8,18 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* No `prefers-color-scheme: dark` override here. The prototype's workspace is unconditionally
+   light and the landing page is unconditionally dark (its tokens get scoped to #landing in
+   Phase 6) — neither follows the OS setting, so honouring it would break both. */
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--sans);
 }
 
 /* ============================================================================
@@ -43,9 +40,20 @@ body {
   --accent: #3b82f6; --success: #10b981; --warning: #f59e0b; --error: #ef4444;
   --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --pill: 9999px;
   --sp-xs: 8px; --sp-sm: 12px; --sp-md: 16px; --sp-lg: 24px; --sp-xl: 32px;
-  --sans: "Inter", system-ui, -apple-system, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, monospace;
+  /* `--font-inter` / `--font-jetbrains-mono` are injected by next/font in app/layout.tsx. The
+     literal family names follow as a fallback so the tokens still resolve if the font pipeline
+     is bypassed (e.g. a plain-CSS render of this file). */
+  --sans: var(--font-inter), "Inter", system-ui, -apple-system, sans-serif;
+  --mono: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, monospace;
 }
+
+/* Base rules from the prototype's reset that Tailwind's preflight does not reproduce. Scoped to
+   the workspace so the marketing and sign-in pages keep Tailwind's defaults. */
+.trellis-workspace a { color: inherit; text-decoration: none; }
+.trellis-workspace textarea { font-family: inherit; }
+.trellis-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
+.trellis-workspace ::-webkit-scrollbar-thumb { background: var(--surface-strong); border-radius: 8px; border: 3px solid var(--canvas); }
+.trellis-workspace ::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
 
 .trellis-workspace {
   flex: 1;
@@ -200,3 +208,23 @@ textarea.paste::placeholder { color: var(--muted-soft); }
 .quota-note { font-size: 12px; color: var(--muted-soft); text-align: center; margin-top: 10px; line-height: 1.5; }
 .quota-note.exhausted { color: var(--body); }
 .quota-note b { color: var(--ink); font-weight: 600; }
+
+/* Responsive rules from the prototype (proto @media 980px / 720px / reduced-motion), limited to
+   the surfaces Quick Notes actually renders. The graph, panel and landing rules in the same
+   prototype blocks belong to Phases 5 and 6 and are deliberately not ported here. */
+@media (max-width: 980px) {
+  .qn-grid { grid-template-columns: 1fr; }
+  .qn-output { max-height: none; }
+}
+@media (max-width: 720px) {
+  .topbar { gap: 12px; padding: 10px 14px; flex-wrap: wrap; height: auto; }
+  .ctx { display: none; }
+  .nav-spacer { display: none; }
+  .pill-group { order: 3; width: 100%; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trellis-workspace *, .trellis-workspace *::before, .trellis-workspace *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
