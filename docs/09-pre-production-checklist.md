@@ -249,9 +249,10 @@ the slow-model timeout at the server (the *client* 45s deadline is covered in
 ### 3.3 Concurrency and race conditions
 
 - [ ] Two users upload the identical document **simultaneously**. Both succeed. The cache insert uses `ON CONFLICT DO NOTHING` — without it, one request errors on a duplicate key
-- [ ] Double-clicking Generate does not produce two charged generations
+- [x] Double-clicking Generate does not produce two charged generations — verified 2026-07-28. The button stays disabled for the whole run (spinner *and* streaming), and a run guard blocks a second `⌘Enter` mid-stream; covered in `components/notes/quick-notes.resilience.test.tsx`
 - [ ] Quota increments correctly under concurrent requests from the same user (no lost update)
 - [ ] Two browser tabs for the same user do not corrupt mastery state
+- [x] **A cache hit does not consume quota** — verified live 2026-07-28: two identical generations left the counter at 29/30, the second returning `tier: cache`. Guarded by `lib/ai/ordering.test.ts`, which asserts call *order* across the cache and quota modules rather than mere presence. This is the invariant that breaks if anyone parallelises the cache lookup with the quota consume to save a round trip; the negative control confirms the test fails ("a cache hit charged the user a generation") when they are.
 
 ### 3.4 Data correctness
 

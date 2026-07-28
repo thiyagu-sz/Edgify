@@ -151,21 +151,26 @@ export async function generate(
           schema,
           mode,
         });
-        await setCached(key, result.data);
         const outcome: LedgerOutcome = fellThrough
           ? "fallback"
           : retried
             ? "retried"
             : "ok";
-        await recordLedger(input.userId, {
-          operation: input.operation,
-          modelId: step.modelId,
-          tier: step.tier,
-          tokensIn: result.tokensIn,
-          tokensOut: result.tokensOut,
-          outcome,
-          latencyMs: elapsed(),
-        });
+        // Independent writes to different tables, neither reading the other's result — issue
+        // them together rather than paying two sequential round trips. Also means a failing
+        // cache write no longer prevents the ledger row from being written.
+        await Promise.all([
+          setCached(key, result.data),
+          recordLedger(input.userId, {
+            operation: input.operation,
+            modelId: step.modelId,
+            tier: step.tier,
+            tokensIn: result.tokensIn,
+            tokensOut: result.tokensOut,
+            outcome,
+            latencyMs: elapsed(),
+          }),
+        ]);
         return { data: result.data, tier: step.tier, notice: null };
       } catch (err) {
         const kind = classify(err);
@@ -224,7 +229,24 @@ export async function generateNotesStream(
 
   const key = cacheKey(input.text, input.format, env.PROMPT_VERSION);
 
-  // ── Tier 0: cache hit ───────────────────────────────────────────────────────
+  /**
+   * ── Tier 0: cache hit ─────────────────────────────────────────────────────
+   *
+   * The cache lookup and the quota consume below stay SEQUENTIAL on purpose. They look like an
+   * obvious `Promise.all` pair, and they are not:
+   *
+   *  - Running them together consumes quota before the cache result is known, so a cache HIT
+   *    would cost the user a generation. That is exactly the invariant `.claude/rules/ai.md`
+   *    ("Ordering matters") exists to protect, and refunding afterwards is worse — the counter is
+   *    briefly wrong under concurrency, and a crash in the window silently eats an allowance.
+   *  - Pairing the lookup with the non-consuming `getRemaining` instead is safe but measures
+   *    strictly SLOWER: the miss path still needs the consume write afterwards, so it adds a
+   *    round trip rather than removing one (test/e2e/db-hotpath-latency.mjs).
+   *
+   * The genuinely independent pair here is the session lookup ∥ this cache lookup — the cache key
+   * is content-addressed and does not depend on `userId`. That is worth ~163ms, but it means
+   * issuing a database write before authentication, and this route is not rate limited. Not taken.
+   */
   const cached = await getCached(key);
   if (cached !== null) {
     await recordLedger(input.userId, {
@@ -337,25 +359,34 @@ async function* commitStream(args: {
     yield next.value;
   }
 
+  // Start the cache write immediately: it depends only on the accumulated text, not on usage,
+  // so it can overlap with both the usage settle and the ledger write below.
   const finalText = accumulated.trim();
-  if (finalText.length > 0) {
-    await setCached(args.key, finalText);
-  }
+  const cacheWrite =
+    finalText.length > 0 ? setCached(args.key, finalText) : Promise.resolve();
+
   let tokens = { tokensIn: 0, tokensOut: 0 };
   try {
     tokens = await args.usage;
   } catch {
     // Usage is best-effort telemetry; never fail a delivered generation over it.
   }
-  await recordLedger(args.userId, {
-    operation: args.operation,
-    modelId: args.modelId,
-    tier: args.tier,
-    tokensIn: tokens.tokensIn,
-    tokensOut: tokens.tokensOut,
-    outcome: args.outcome,
-    latencyMs: args.elapsed(),
-  });
+
+  // Two independent writes to different tables. Sequential here cost a full extra round trip
+  // (~250ms against a remote database) on every completed generation, delaying stream close for
+  // no reason — the ledger row does not read the cache row.
+  await Promise.all([
+    cacheWrite,
+    recordLedger(args.userId, {
+      operation: args.operation,
+      modelId: args.modelId,
+      tier: args.tier,
+      tokensIn: tokens.tokensIn,
+      tokensOut: tokens.tokensOut,
+      outcome: args.outcome,
+      latencyMs: args.elapsed(),
+    }),
+  ]);
 }
 
 /** One model attempt: call, validate, and on malformed content do exactly ONE repair. */

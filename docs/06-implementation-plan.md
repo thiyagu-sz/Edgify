@@ -153,6 +153,40 @@ should be treated as stale.
 Progressive streaming itself is confirmed in a real browser: 100 DOM updates across 85 distinct
 lengths for one generation, first paint measured client-side.
 
+**Database round trips on the hot path** (`test/e2e/db-hotpath-latency.mjs`, per-call medians).
+Every query costs ~250–275ms here and the work itself is trivial — that is network distance to
+`us-east-2`, not database time.
+
+| Call | Median | On the first-token path? |
+|---|---|---|
+| session lookup (SELECT) | 277ms | yes |
+| cache lookup (UPDATE…RETURNING — it bumps hit stats) | 276ms | yes |
+| quota consume (INSERT…ON CONFLICT) | 275ms | yes, on a miss |
+| ledger write (INSERT) | 275ms | no, on completion |
+
+Changed: the cache write and the ledger write at the end of a generation were sequential and are
+independent — neither reads the other's result. Issued together they cost **552ms → 270ms, saving
+~281ms per completed generation**. Two parallel statements cost about the same as one, because the
+cost is round-trip latency rather than server work. This also means a failing cache write no
+longer prevents the ledger row from being written.
+
+Not changed, and deliberately so:
+
+- **cache ∥ quota-consume** would consume the allowance before the cache result is known, so a
+  cache HIT would cost the user a generation — the invariant in `.claude/rules/ai.md`. Guarded by
+  `lib/ai/ordering.test.ts`, which fails with "a cache hit charged the user a generation" if
+  anyone tries it. Verified live: two identical requests left the counter at 29/30.
+- **cache ∥ quota-*read*** is safe but measures strictly *worse* — the miss path still needs the
+  consume write afterwards, so it adds a round trip instead of removing one.
+- **session ∥ cache** is the one genuine first-token win (~283ms; the cache key is
+  content-addressed and does not depend on `userId`). Not taken: it issues a database *write*
+  before authentication, and `/api/notes/generate` is not rate limited. Worth revisiting once it
+  is.
+
+So the first-token path still costs ~829ms in three sequential round trips. That is a deployment
+concern (co-locate the app with the database) rather than a code one — co-located, all three fall
+to single-digit milliseconds.
+
 **Exports.** PDF verified by inspecting the generated artifact (correct `%PDF-` header, text
 present, no `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/AA` or scripted `/OpenAction`);
 the W7 `</body>` trap is covered. **The `.doc` opening correctly in Word is unverified** — Word is
