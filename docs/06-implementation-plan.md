@@ -60,6 +60,24 @@ Unglamorous, early, and the reason nothing catches fire later.
   that is the expensive one: the handler resolves the session (a DB read) before rejecting, so an
   attacker with no credentials can drive database work per request, and the route is the entry
   point to model-tier spend. Wrap both with the same `withRateLimit(routeName, handler)`
+- **`checkRateLimit` costs two sequential round trips; make it one before it goes on the authed
+  routes.** It runs the counter upsert *and* an elapsed-window cleanup `DELETE`
+  (`lib/rate-limit.ts`), both awaited in sequence. Only the upsert answers the question the
+  request is asking. The `DELETE` is pure housekeeping — the code's own comment notes an elapsed
+  window is never read again — so it is a full round trip (~275ms against a remote database)
+  charged to every request for work no request needs. On `/api/health` that is invisible; in
+  front of generation it doubles the wrapper's cost on the first-token path. Move it off the
+  critical path:
+  - **Opportunistically** — the upsert's `RETURNING count` already tells you when a *new* window
+    row was created (`count === 1`), which is exactly when a prior window has just become
+    elapsed. Cleaning only then reduces the `DELETE` from once per request to once per window per
+    key, needs no new machinery, and keeps it inside the same handler
+  - **Backgrounded** — fire and forget. If chosen, attach a `.catch()` at the point of creation:
+    an unobserved rejected promise becomes an `unhandledRejection`, which this branch already hit
+    once for real (docs/09 §3.1) and which is a process-stability risk on Cloud Run
+  - **Batched** — a periodic sweep across all keys, if a scheduler exists by then
+
+  Whichever is chosen, the wrapper must add **one** round trip, not two.
 
 **Acceptance criteria**
 - [ ] A test billing alert actually fires
@@ -68,6 +86,8 @@ Unglamorous, early, and the reason nothing catches fire later.
 - [ ] An unauthenticated route rejects a burst of requests
 - [ ] **`/api/notes/generate` and `/api/usage` reject a burst of unauthenticated requests** — not
       met; see the scope note above
+- [ ] **`checkRateLimit` issues one round trip per request, not two** — assert the query count,
+      not the wall-clock time, so the check does not depend on network distance
 - [ ] Sentry receives a deliberately thrown test error
 
 > Billing caps before the code that can spend money. The failure mode this prevents is a
@@ -195,13 +215,16 @@ Not changed, and deliberately so:
   parallelise.**
 
   Note what this does *not* buy, because the arithmetic is counter-intuitive. `checkRateLimit`
-  itself costs **two** sequential round trips — the counter upsert and the elapsed-window cleanup
-  `DELETE` (`lib/rate-limit.ts`) — so adding the wrapper puts ~550ms back onto the path that
-  parallelising removes ~283ms from. Net effect at today's ~275ms/round-trip: **worse, by roughly
-  267ms.** Even with the cleanup `DELETE` moved off the critical path (it is pure housekeeping —
-  an elapsed window is never read again), the best case is about a wash. Rate limit the route
-  because it is a security gap, not because it unlocks a speedup; the speedup does not survive
-  its own precondition.
+  costs **two** sequential round trips today — the counter upsert and an elapsed-window cleanup
+  `DELETE` — so adding the wrapper as it stands puts ~550ms back onto the path that parallelising
+  removes ~283ms from: **net worse by roughly 267ms** at ~275ms per round trip. Moving the
+  cleanup off the critical path is therefore a prerequisite, not a nicety, and is logged as a
+  Phase 2 scope item. Even then the best case is about a wash (~275ms added against ~283ms
+  removed).
+
+  So: rate limit the route because it is a security gap, not because it unlocks a speedup. The
+  speedup does not survive its own precondition, and the sequencing is **fix the cleanup → wrap
+  the routes → only then parallelise**.
 
 So the first-token path still costs ~829ms in three sequential round trips, and no safe
 reordering meaningfully changes that. It is a **deployment** concern rather than a code one:
