@@ -19,6 +19,11 @@ vi.mock("@/lib/quota", () => ({
   getRemaining: (...args: unknown[]) => getRemaining(...args),
   consumeQuota: (...args: unknown[]) => consumeQuota(...args),
 }));
+// Transparent limiter: this file is about the non-consuming contract. The wrapper's own behaviour
+// is proven in `app/api/rate-limit-coverage.test.ts` and `lib/rate-limit.integration.test.ts`.
+vi.mock("@/lib/rate-limit", () => ({
+  withRateLimit: (_name: string, handler: unknown) => handler,
+}));
 
 const { GET } = await import("./route");
 

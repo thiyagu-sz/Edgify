@@ -1,17 +1,23 @@
 import { auth } from "@/lib/auth";
 import { log } from "@/lib/log";
 import { getRemaining } from "@/lib/quota";
+import { withRateLimit } from "@/lib/rate-limit";
 
 /**
  * GET /api/usage — the user's remaining daily generations, for the UI counter (docs/04 §5).
  *
  * Read-only and non-consuming (`getRemaining`, not `consumeQuota`): showing the counter must
  * never cost the user a generation. Thin (AGENTS.md): session → query → shape.
+ *
+ * Rate limited per IP ahead of the session lookup (docs/06 Phase 2): unwrapped, an
+ * unauthenticated caller drives a session DB read on every request before being rejected. The
+ * limit is generous — the UI polls this after every generation, and a shared campus NAT puts a
+ * whole class behind one address.
  */
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request): Promise<Response> {
+async function handler(request: Request): Promise<Response> {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) {
     return Response.json(
@@ -35,3 +41,8 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 }
+
+export const GET = withRateLimit("usage", handler, {
+  limit: 120,
+  windowMs: 60_000,
+});

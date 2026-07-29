@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { createNote } from "@/lib/db/queries/notes";
 import { env } from "@/lib/env";
 import { log } from "@/lib/log";
+import { withRateLimit } from "@/lib/rate-limit";
 
 /**
  * POST /api/notes/generate — streaming Quick Notes (W2, docs/05).
@@ -14,12 +15,18 @@ import { log } from "@/lib/log";
  * (lib/ai/generate.ts) — this handler never touches a model or the database directly (notes are
  * persisted through the userId-scoped query layer).
  *
- * Response contract — the client branches on `X-Trellis-Kind`:
- *   - `stream` : body is progressive markdown text; `X-Trellis-Tier` names the tier.
+ * Response contract — the client branches on `X-Edgify-Kind`:
+ *   - `stream` : body is progressive markdown text; `X-Edgify-Tier` names the tier.
  *   - `final`  : JSON `{ data, tier, notice }` — a cache hit, a quiz, or the demo/quota fallback.
  *   - `busy`   : JSON `{ message }` — every tier failed and no demo exists (the only failure).
  *   - `message`: JSON `{ message }` — input the user can fix (too short / too long).
  * No raw errors, status codes, or vendor names ever reach the body (docs/04 §7).
+ *
+ * Rate limited per IP BEFORE the session lookup (docs/06 Phase 2). This is the expensive one:
+ * unwrapped, an unauthenticated caller drives a session DB read per request, and this route is
+ * the entry point to model-tier spend. The limit is generous enough for a shared campus NAT —
+ * authenticated users are already bounded by the per-user daily quota (docs/04 §5); this exists
+ * to stop an anonymous burst, not to ration real work.
  */
 
 export const dynamic = "force-dynamic";
@@ -41,11 +48,11 @@ function reply(
 ): Response {
   return Response.json(body, {
     status,
-    headers: { ...NO_STORE, "X-Trellis-Kind": kind },
+    headers: { ...NO_STORE, "X-Edgify-Kind": kind },
   });
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handler(request: Request): Promise<Response> {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) {
     return reply("auth", { message: "Please sign in again to continue." }, 401);
@@ -78,7 +85,7 @@ export async function POST(request: Request): Promise<Response> {
   if (text.length > MAX_CHARS) {
     return reply("message", {
       message:
-        "That's more than Trellis can take at once. Trim it to about 40,000 characters and try again.",
+        "That's more than Edgify can take at once. Trim it to about 40,000 characters and try again.",
     });
   }
 
@@ -139,11 +146,16 @@ export async function POST(request: Request): Promise<Response> {
     headers: {
       ...NO_STORE,
       "Content-Type": "text/plain; charset=utf-8",
-      "X-Trellis-Kind": "stream",
-      "X-Trellis-Tier": tier,
+      "X-Edgify-Kind": "stream",
+      "X-Edgify-Tier": tier,
     },
   });
 }
+
+export const POST = withRateLimit("notes-generate", handler, {
+  limit: 60,
+  windowMs: 60_000,
+});
 
 /** Best-effort save (W2 step 10). A failure is logged, never surfaced (docs/04 §7). */
 async function persistNote(userId: string, format: string, data: unknown): Promise<void> {

@@ -244,8 +244,11 @@ export async function generateNotesStream(
    *    round trip rather than removing one (test/e2e/db-hotpath-latency.mjs).
    *
    * The genuinely independent pair here is the session lookup ∥ this cache lookup — the cache key
-   * is content-addressed and does not depend on `userId`. That is worth ~163ms, but it means
-   * issuing a database write before authentication, and this route is not rate limited. Not taken.
+   * is content-addressed and does not depend on `userId`. It is worth ~283ms and its blocker (the
+   * route being unwrapped, so overlapping would issue a database WRITE before authentication) was
+   * removed on 2026-07-29 when `/api/notes/generate` was rate limited. Still NOT taken: the
+   * wrapper adds one round trip (~275ms) to the same path, so the best case is a wash. See
+   * docs/06 Phase 4 results.
    */
   const cached = await getCached(key);
   if (cached !== null) {

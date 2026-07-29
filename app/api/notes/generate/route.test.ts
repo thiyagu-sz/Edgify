@@ -26,6 +26,12 @@ vi.mock("@/lib/ai/generate", async () => {
   return { ...actual, generateNotesStream: (...args: unknown[]) => generateNotesStream(...args) };
 });
 vi.mock("@/lib/db/queries/notes", () => ({ createNote: (...args: unknown[]) => createNote(...args) }));
+// Transparent limiter: this file is about the streaming contract, not the wrapper. The wrapper's
+// own behaviour — burst rejection ahead of the session read — is proven in
+// `app/api/rate-limit-coverage.test.ts` and `lib/rate-limit.integration.test.ts`.
+vi.mock("@/lib/rate-limit", () => ({
+  withRateLimit: (_name: string, handler: unknown) => handler,
+}));
 
 const { POST } = await import("./route");
 
@@ -74,7 +80,7 @@ describe("POST /api/notes/generate — flushes the first byte immediately", () =
     });
 
     const response = await POST(request({ text: SOURCE, format: "key_points" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("stream");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("stream");
     expect(response.body).not.toBeNull();
 
     const reader = response.body!.getReader();
@@ -178,7 +184,7 @@ describe("POST /api/notes/generate — non-streaming outcomes stay buffered", ()
     });
 
     const response = await POST(request({ text: SOURCE, format: "mcqs" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("final");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("final");
     await expect(response.json()).resolves.toMatchObject({ data: quiz, tier: "free" });
   });
 
@@ -200,7 +206,7 @@ describe("POST /api/notes/generate — never leaks a raw error", () => {
     generateNotesStream.mockRejectedValue(new Error("ECONNREFUSED 10.0.0.1:5432 at Pool.connect"));
 
     const response = await POST(request({ text: SOURCE, format: "key_points" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("busy");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("busy");
 
     const body = (await response.json()) as { message: string };
     expect(body.message).toBe("Server is busy, please try again in a moment.");
@@ -214,7 +220,7 @@ describe("POST /api/notes/generate — never leaks a raw error", () => {
   it("rejects an unauthenticated request without saying why in vendor terms", async () => {
     getSession.mockResolvedValue(null);
     const response = await POST(request({ text: SOURCE, format: "key_points" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("auth");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("auth");
     await expect(response.json()).resolves.toEqual({
       message: "Please sign in again to continue.",
     });
@@ -223,13 +229,13 @@ describe("POST /api/notes/generate — never leaks a raw error", () => {
 
   it("does not call the model for text below the minimum", async () => {
     const response = await POST(request({ text: "too short", format: "key_points" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("message");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("message");
     expect(generateNotesStream).not.toHaveBeenCalled();
   });
 
   it("does not call the model for an unknown format", async () => {
     const response = await POST(request({ text: SOURCE, format: "not_a_format" }));
-    expect(response.headers.get("X-Trellis-Kind")).toBe("message");
+    expect(response.headers.get("X-Edgify-Kind")).toBe("message");
     expect(generateNotesStream).not.toHaveBeenCalled();
   });
 });

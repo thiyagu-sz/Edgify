@@ -54,40 +54,39 @@ Unglamorous, early, and the reason nothing catches fire later.
 - Cross-user isolation tests
 - `lib/quota.ts` — daily counter, upsert, read remaining
 - `lib/log.ts` and Sentry wiring
-- Rate limiting on unauthenticated routes — **INCOMPLETE, found 2026-07-28 during Phase 4.**
-  `withRateLimit` exists and works, but is applied to `/api/health` **only**. `/api/notes/generate`
-  and `/api/usage` are unwrapped, so an unauthenticated caller reaches both. On the generate route
-  that is the expensive one: the handler resolves the session (a DB read) before rejecting, so an
-  attacker with no credentials can drive database work per request, and the route is the entry
-  point to model-tier spend. Wrap both with the same `withRateLimit(routeName, handler)`
-- **`checkRateLimit` costs two sequential round trips; make it one before it goes on the authed
-  routes.** It runs the counter upsert *and* an elapsed-window cleanup `DELETE`
-  (`lib/rate-limit.ts`), both awaited in sequence. Only the upsert answers the question the
-  request is asking. The `DELETE` is pure housekeeping — the code's own comment notes an elapsed
-  window is never read again — so it is a full round trip (~275ms against a remote database)
-  charged to every request for work no request needs. On `/api/health` that is invisible; in
-  front of generation it doubles the wrapper's cost on the first-token path. Move it off the
-  critical path:
-  - **Opportunistically** — the upsert's `RETURNING count` already tells you when a *new* window
-    row was created (`count === 1`), which is exactly when a prior window has just become
-    elapsed. Cleaning only then reduces the `DELETE` from once per request to once per window per
-    key, needs no new machinery, and keeps it inside the same handler
-  - **Backgrounded** — fire and forget. If chosen, attach a `.catch()` at the point of creation:
-    an unobserved rejected promise becomes an `unhandledRejection`, which this branch already hit
-    once for real (docs/09 §3.1) and which is a process-stability risk on Cloud Run
-  - **Batched** — a periodic sweep across all keys, if a scheduler exists by then
-
-  Whichever is chosen, the wrapper must add **one** round trip, not two.
+- Rate limiting on unauthenticated routes — **CLOSED 2026-07-29.** Was incomplete: `withRateLimit`
+  existed but was applied to `/api/health` **only**, so `/api/notes/generate` and `/api/usage` were
+  reachable unwrapped. On the generate route that was the expensive one — the handler resolved the
+  session (a DB read) before rejecting, so an attacker with no credentials could drive database
+  work per request, and the route is the entry point to model-tier spend. Both are now wrapped
+  (`notes-generate`, 60/min/IP; `usage`, 120/min/IP — generous because a shared campus NAT puts a
+  whole class behind one address, and authenticated users are already bounded by the daily quota)
+- **`checkRateLimit` cost two sequential round trips; now one.** It ran the counter upsert *and*
+  an elapsed-window cleanup `DELETE`, both awaited in sequence, when only the upsert answers the
+  question the request is asking. Fixed **opportunistically**: the upsert's `RETURNING count`
+  reports when a *new* window row was created (`count === 1`), which is exactly when a prior
+  window became elapsed, so cleanup now runs once per window per key rather than once per request.
+  Two supporting changes fell out of it — the cleanup sits *outside* `withDbRetry` (a retry there
+  would re-run the upsert and double-count the request), and a cleanup failure is caught and
+  logged rather than failing the request.
+- **`withRateLimit` fails open.** If the limiter's own query fails, the request proceeds and the
+  failure is logged. Throwing would surface Next's raw 500 on routes that otherwise map every
+  failure to a calm message (docs/04 §7), and would turn a brief database hiccup into a total
+  outage. Nothing is exposed: every route behind the wrapper needs the database for its own
+  session and quota reads, so it cannot do expensive work either.
 
 **Acceptance criteria**
 - [ ] A test billing alert actually fires
 - [ ] Isolation test: user A's document is invisible to user B through **every** query function
 - [ ] Quota increments, enforces at the limit, and resets at day boundary
 - [ ] An unauthenticated route rejects a burst of requests
-- [ ] **`/api/notes/generate` and `/api/usage` reject a burst of unauthenticated requests** — not
-      met; see the scope note above
-- [ ] **`checkRateLimit` issues one round trip per request, not two** — assert the query count,
-      not the wall-clock time, so the check does not depend on network distance
+- [x] **`/api/notes/generate` and `/api/usage` reject a burst of unauthenticated requests** — met
+      2026-07-29. Both wrapped; `app/api/rate-limit-coverage.test.ts` asserts the rejection happens
+      **before the session lookup** (`getSession` never called), which is the property that
+      matters — asserting only "returns 429" would pass even with the DB read still in front of it
+- [x] **`checkRateLimit` issues one round trip per request, not two** — met 2026-07-29. Asserted as
+      a statement count via `test/count-queries.ts`, not wall-clock time, so it holds identically
+      against a localhost container and a remote Neon instance
 - [ ] Sentry receives a deliberately thrown test error
 
 > Billing caps before the code that can spend money. The failure mode this prevents is a
@@ -138,7 +137,7 @@ The heart of the system. Build it once, properly.
 - Quota display in the UI
 
 **Acceptance criteria**
-- [x] Side-by-side with `trellis-prototype.html`, the UI is visually indistinguishable
+- [x] Side-by-side with `edgify-prototype.html`, the UI is visually indistinguishable
 - [~] Tokens stream progressively; first token within ~2 seconds — streaming yes, ~2s **not met**
 - [x] All ~~nine~~ **eight** formats produce sensible output
 - [x] Quiz scores correctly and shows explanations
@@ -206,25 +205,21 @@ Not changed, and deliberately so:
 - **cache ∥ quota-*read*** is safe but measures strictly *worse* — the miss path still needs the
   consume write afterwards, so it adds a round trip instead of removing one.
 - **session ∥ cache** is the one genuine first-token win (~283ms; the cache key is
-  content-addressed and does not depend on `userId`). **Blocked on rate limiting — do not
-  implement it before then.** The cache lookup is an `UPDATE…RETURNING`, so overlapping it with
-  the session lookup means issuing a database *write* before the caller is authenticated, and
-  `/api/notes/generate` is currently unwrapped (see the Phase 2 scope note). That converts an
-  unauthenticated request from one read into a read plus a write — a DoS amplification, not a
-  latency optimisation. The ordering is a hard dependency: **rate limit the route first, then
-  parallelise.**
+  content-addressed and does not depend on `userId`). Its precondition — rate limiting the route —
+  was met on 2026-07-29, but **it has still not been implemented, and the arithmetic says it is not
+  worth it.** The cache lookup is an `UPDATE…RETURNING`, so overlapping it with the session lookup
+  means issuing a database *write* before the caller is authenticated; that is only acceptable
+  behind a limiter, which is why the ordering was a hard dependency.
 
-  Note what this does *not* buy, because the arithmetic is counter-intuitive. `checkRateLimit`
-  costs **two** sequential round trips today — the counter upsert and an elapsed-window cleanup
-  `DELETE` — so adding the wrapper as it stands puts ~550ms back onto the path that parallelising
-  removes ~283ms from: **net worse by roughly 267ms** at ~275ms per round trip. Moving the
-  cleanup off the critical path is therefore a prerequisite, not a nicety, and is logged as a
-  Phase 2 scope item. Even then the best case is about a wash (~275ms added against ~283ms
-  removed).
+  What it does *not* buy, because the arithmetic is counter-intuitive: the wrapper itself now adds
+  one round trip (~275ms) to the same path, against the ~283ms parallelising removes. **Best case
+  is a wash.** The pre-fix wrapper would have made it net *worse* by roughly 267ms, which is why
+  the cleanup fix had to come first.
 
-  So: rate limit the route because it is a security gap, not because it unlocks a speedup. The
-  speedup does not survive its own precondition, and the sequencing is **fix the cleanup → wrap
-  the routes → only then parallelise**.
+  So the sequencing held — **fix the cleanup → wrap the routes → only then consider parallelising**
+  — and the conclusion at the end of it is: don't. The routes were rate limited because leaving
+  them unwrapped was a security gap, not because it unlocked a speedup; the speedup does not
+  survive its own precondition.
 
 So the first-token path still costs ~829ms in three sequential round trips, and no safe
 reordering meaningfully changes that. It is a **deployment** concern rather than a code one:
