@@ -54,13 +54,20 @@ Unglamorous, early, and the reason nothing catches fire later.
 - Cross-user isolation tests
 - `lib/quota.ts` — daily counter, upsert, read remaining
 - `lib/log.ts` and Sentry wiring
-- Rate limiting on unauthenticated routes
+- Rate limiting on unauthenticated routes — **INCOMPLETE, found 2026-07-28 during Phase 4.**
+  `withRateLimit` exists and works, but is applied to `/api/health` **only**. `/api/notes/generate`
+  and `/api/usage` are unwrapped, so an unauthenticated caller reaches both. On the generate route
+  that is the expensive one: the handler resolves the session (a DB read) before rejecting, so an
+  attacker with no credentials can drive database work per request, and the route is the entry
+  point to model-tier spend. Wrap both with the same `withRateLimit(routeName, handler)`
 
 **Acceptance criteria**
 - [ ] A test billing alert actually fires
 - [ ] Isolation test: user A's document is invisible to user B through **every** query function
 - [ ] Quota increments, enforces at the limit, and resets at day boundary
 - [ ] An unauthenticated route rejects a burst of requests
+- [ ] **`/api/notes/generate` and `/api/usage` reject a burst of unauthenticated requests** — not
+      met; see the scope note above
 - [ ] Sentry receives a deliberately thrown test error
 
 > Billing caps before the code that can spend money. The failure mode this prevents is a
@@ -179,13 +186,27 @@ Not changed, and deliberately so:
 - **cache ∥ quota-*read*** is safe but measures strictly *worse* — the miss path still needs the
   consume write afterwards, so it adds a round trip instead of removing one.
 - **session ∥ cache** is the one genuine first-token win (~283ms; the cache key is
-  content-addressed and does not depend on `userId`). Not taken: it issues a database *write*
-  before authentication, and `/api/notes/generate` is not rate limited. Worth revisiting once it
-  is.
+  content-addressed and does not depend on `userId`). **Blocked on rate limiting — do not
+  implement it before then.** The cache lookup is an `UPDATE…RETURNING`, so overlapping it with
+  the session lookup means issuing a database *write* before the caller is authenticated, and
+  `/api/notes/generate` is currently unwrapped (see the Phase 2 scope note). That converts an
+  unauthenticated request from one read into a read plus a write — a DoS amplification, not a
+  latency optimisation. The ordering is a hard dependency: **rate limit the route first, then
+  parallelise.**
 
-So the first-token path still costs ~829ms in three sequential round trips. That is a deployment
-concern (co-locate the app with the database) rather than a code one — co-located, all three fall
-to single-digit milliseconds.
+  Note what this does *not* buy, because the arithmetic is counter-intuitive. `checkRateLimit`
+  itself costs **two** sequential round trips — the counter upsert and the elapsed-window cleanup
+  `DELETE` (`lib/rate-limit.ts`) — so adding the wrapper puts ~550ms back onto the path that
+  parallelising removes ~283ms from. Net effect at today's ~275ms/round-trip: **worse, by roughly
+  267ms.** Even with the cleanup `DELETE` moved off the critical path (it is pure housekeeping —
+  an elapsed window is never read again), the best case is about a wash. Rate limit the route
+  because it is a security gap, not because it unlocks a speedup; the speedup does not survive
+  its own precondition.
+
+So the first-token path still costs ~829ms in three sequential round trips, and no safe
+reordering meaningfully changes that. It is a **deployment** concern rather than a code one:
+co-locate the app with the database and all three fall to single-digit milliseconds, which is
+worth more than every reordering discussed here combined.
 
 **Exports.** PDF verified by inspecting the generated artifact (correct `%PDF-` header, text
 present, no `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/AA` or scripted `/OpenAction`);

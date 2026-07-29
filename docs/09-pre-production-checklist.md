@@ -98,6 +98,12 @@ An untested backup is not a backup.
 - [ ] An expired or tampered session cookie redirects to sign-in rather than throwing
 - [ ] The OAuth callback cannot be used as an open redirect — try `?callbackURL=https://evil.com`
 - [ ] Every `/api/*` route except auth and health checks requires a session. Test each one signed out
+- [ ] **Every `/api/*` route is rate limited, not just the ones that skip auth.** Requiring a
+      session is not the same as being protected: the handler still resolves that session — a
+      database read — before it can reject, so an unauthenticated flood costs real work per
+      request. Found 2026-07-28: `withRateLimit` is applied to `/api/health` only, leaving
+      `/api/notes/generate` (the entry point to model-tier spend) and `/api/usage` unwrapped.
+      See docs/06 Phase 2 scope
 
 ### 2.2 Upload safety
 
