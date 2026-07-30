@@ -36,13 +36,29 @@ everyone else. Clean up with `node --env-file=.env.local test/e2e/seed-session.m
 | `degradation-proof.mjs` | Model failure → calm sample notes + visible banner, never a hung spinner | no |
 | `first-token-latency.mjs` | First-token distribution, attributed between database and provider | yes, n×1 |
 | `all-formats.mjs` | All eight formats return usable output | yes, 8 |
+| `parse-memory.mjs` | Memory returns to baseline across 200 sequential PDF parses | no |
 
 ```bash
 node --env-file=.env.local test/e2e/visual-diff.mjs
 node --env-file=.env.local test/e2e/browser-proofs.mjs
 N=10 node --env-file=.env.local test/e2e/first-token-latency.mjs
 node --env-file=.env.local test/e2e/all-formats.mjs
+node test/e2e/parse-memory.mjs          # no server, no database, no credits
 ```
+
+### Reading the memory run
+
+Three arms in three processes: `fixed` (the real `extractPdf`), `nodestroy` (the release removed)
+and `retain` (every document deliberately held alive). Assertions are on **heap**, not rss — V8
+does not return pages to the OS eagerly, so rss drifts several MB on a run whose heap is flat, and
+gating on it fails correct code.
+
+`retain` exists because a memory test with only the happy path passes whether or not the fix is
+present. It is a leak that genuinely exists, so it establishes the harness can see one; if it ever
+stops growing, the run fails with "the harness is not detecting retention" rather than reporting a
+meaningless pass. Note that `nodestroy` is *not* the control — removing the release does not
+produce unbounded growth on this library version, which is itself a documented finding
+(`02-tech-stack.md`).
 
 ### Degradation runs
 

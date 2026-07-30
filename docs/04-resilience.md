@@ -88,7 +88,7 @@ daily quota, so aggressive retrying drains the allowance faster than successful 
 
 Demo mode is the reason this system does not have a hard failure state. It exists for three
 situations: the ladder reaching tier 5, the user exhausting their daily quota, and a visitor
-who wants to try Trellis before signing in.
+who wants to try Edgify before signing in.
 
 **The content already exists.** The prototype ships a curated machine-learning knowledge
 graph (calculus and linear algebra through to CNNs, RNNs and attention) with full
@@ -113,7 +113,7 @@ then commit them as static data. They cost nothing at runtime and never fail.
 - **Fully interactive.** Clicking concepts, flipping flashcards, taking quizzes, exporting —
   all work. It is a real experience, not a screenshot.
 - **Reachable deliberately.** A "Try the demo" entry point on the landing page. Someone
-  evaluating Trellis should not have to sign in first.
+  evaluating Edgify should not have to sign in first.
 - **Never written to the user's data.** Demo content is not persisted as their document,
   their graph, or their notes.
 - **Recorded in the ledger** with `outcome: "demo"`. A rising demo rate is your earliest
@@ -161,9 +161,9 @@ Guard for these specific cases, because they occur in practice:
 | Case | Detection | User message |
 |---|---|---|
 | File too large | Size check **before** reading the body | "That file is over the 10 MB limit. Try a smaller file, or paste the text directly." |
-| Unsupported type | Extension and MIME check | "Trellis reads PDF, DOCX, TXT and Markdown files." |
+| Unsupported type | Extension and MIME check | "Edgify reads PDF, DOCX, TXT and Markdown files." |
 | Encrypted PDF | Parse throws | "That PDF is password-protected. Remove the protection, or paste the text." |
-| **Scanned document** | Extraction yields under ~200 chars from a multi-page file | "This looks like a scanned document — Trellis can't read the text yet. Paste the text directly and everything else will work." |
+| **Scanned document** | Extraction yields under ~200 chars from a multi-page file | "This looks like a scanned document — Edgify can't read the text yet. Paste the text directly and everything else will work." |
 | Corrupt file | Parse throws | "That file couldn't be read. It may be damaged — try re-saving or exporting it again." |
 | Text too short | Under ~200 chars | "There isn't enough text here to work with. Add a few paragraphs." |
 
@@ -171,9 +171,16 @@ The scanned-document case matters more than it looks — photographed lecture no
 among students, and a system that silently returns an empty result there feels broken. Detect
 it and say so plainly.
 
-Always destroy the parsed PDF document object in a `finally` block. `unpdf` holds it in
-memory until released, and skipping this quietly exhausts container memory after enough
-uploads.
+Always release the parsed PDF document in a `finally` block — `proxy.loadingTask.destroy()`, not
+the `proxy.destroy()` this document used to specify, which does not exist and whose `TypeError`
+would mask the real error from inside the `finally`.
+
+Measured 2026-07-29 (`test/e2e/parse-memory.mjs`, 200 sequential parses): skipping the release
+does **not** exhaust container memory as previously claimed — heap growth was 1.3 KB/parse with it
+and 2.4 KB/parse without, and rss plateaued. The rule stands because eager release is free and
+does not depend on a collection arriving under memory pressure, but it is enforced by a test
+(`lib/parse/pdf.test.ts`), not by waiting for a symptom that will not appear. See
+`02-tech-stack.md` for the full finding.
 
 ---
 
@@ -219,7 +226,7 @@ Use these strings. Consistency is part of feeling reliable.
 | Demo fallback | "Showing sample content. Live generation is temporarily unavailable." |
 | Quota reached | "You've used today's generations. Your limit resets at midnight." |
 | Upload too large | "That file is over the 10 MB limit. Try a smaller file, or paste the text directly." |
-| Scanned PDF | "This looks like a scanned document — Trellis can't read the text yet. Paste the text directly and everything else will work." |
+| Scanned PDF | "This looks like a scanned document — Edgify can't read the text yet. Paste the text directly and everything else will work." |
 | Graph build failed | "Couldn't map this document's structure. Quick Notes still works on it." |
 | Session expired | "Please sign in again to continue." |
 | Anything unexpected | "Something went wrong on our side. Please try again in a moment." |

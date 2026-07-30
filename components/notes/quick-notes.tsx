@@ -9,7 +9,7 @@ import { renderMarkdown } from "@/lib/sanitize";
 
 /**
  * Quick Notes — the interactive workspace island (W2, docs/05), a faithful React port of the
- * prototype's Quick Notes UI (docs/reference/trellis-prototype.html). The prototype called the
+ * prototype's Quick Notes UI (docs/reference/edgify-prototype.html). The prototype called the
  * model from the browser; here every generation goes through POST /api/notes/generate, which
  * owns the key, the ladder and the ledger (AGENTS.md #1/#3). Markdown streams; quizzes come back
  * validated. Model output is sanitised before render (renderMarkdown); quiz text is React-escaped.
@@ -43,7 +43,10 @@ export function QuickNotes({
   const [out, setOut] = useState<OutState>({ kind: "empty" });
   const [remaining, setRemaining] = useState(initialRemaining);
   const [limit, setLimit] = useState(initialLimit);
+  /** The upload chip: null when hidden, else the label beside the file icon. */
+  const [fileChip, setFileChip] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const genIdRef = useRef(0);
   /** True for the whole of a generation, streaming included, so runs cannot overlap. */
   const runningRef = useRef(false);
@@ -91,7 +94,7 @@ export function QuickNotes({
         body: JSON.stringify({ text: content, format: fmt.id }),
         signal: controller.signal,
       });
-      const kind = res.headers.get("X-Trellis-Kind");
+      const kind = res.headers.get("X-Edgify-Kind");
 
       if (kind === "stream" && res.body) {
         const reader = res.body.getReader();
@@ -194,6 +197,51 @@ export function QuickNotes({
     return "";
   }, [out]);
 
+  /**
+   * Upload → extract → fill the textarea (W3, docs/05).
+   *
+   * The extracted text is shown rather than hidden, deliberately: the user can see at a glance
+   * whether extraction worked, which turns a silent failure into an obvious one. Extraction is
+   * side-effect free on the server — no document row, no quota, no model call — so trying a file
+   * costs nothing and the user can edit the result before generating.
+   */
+  const onFilePicked = useCallback(async (file: File) => {
+    if (runningRef.current) return;
+    setFileChip(`Reading ${file.name}…`);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const res = await fetch("/api/documents/extract", { method: "POST", body: form });
+      const body = (await res.json()) as {
+        text?: string;
+        charCount?: number;
+        message?: string;
+      };
+
+      if (typeof body.text === "string") {
+        setText(body.text);
+        setFileChip(`${file.name} · ${(body.charCount ?? body.text.length).toLocaleString()} chars`);
+        return;
+      }
+
+      // Every failure already carries its own next action (docs/04 §7) — the scanned-PDF message
+      // points at pasting, the oversize one at a smaller file. Do not append another.
+      setFileChip(null);
+      setOut({
+        kind: "error",
+        title: "Couldn't read that file",
+        message: body.message ?? "That file couldn't be read. It may be damaged — try re-saving or exporting it again.",
+      });
+    } catch {
+      setFileChip(null);
+      setOut({
+        kind: "error",
+        title: "Couldn't read that file",
+        message: "Something went wrong on our side. Please try again in a moment.",
+      });
+    }
+  }, []);
+
   const quota = quotaState(remaining, limit);
   // Disabled for the whole run — the spinner AND the streaming phase. Re-enabling once the first
   // token lands would invite a second generation on top of the one still writing.
@@ -206,8 +254,12 @@ export function QuickNotes({
         <div className="qn-label">
           Source material
           <div className="qn-actions">
-            {/* Upload/extraction lands in Phase 5 (W3); inert for now. */}
-            <button className="link" type="button" disabled title="File upload arrives soon — paste text for now">
+            <button
+              className="link"
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+            >
               <IconUpload /> Upload file
             </button>
             <button className="link" type="button" onClick={loadSample}>
@@ -215,6 +267,37 @@ export function QuickNotes({
             </button>
           </div>
         </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Reset first, so picking the same file twice still fires a change event.
+            e.target.value = "";
+            if (file) void onFilePicked(file);
+          }}
+        />
+        {fileChip !== null && (
+          <div className="filechip show">
+            <IconSample />
+            {/* Model-free but still untrusted: a filename is user-supplied and React escapes it. */}
+            <span>{fileChip}</span>
+            <span
+              className="x"
+              role="button"
+              tabIndex={0}
+              aria-label="Remove file"
+              onClick={() => setFileChip(null)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") setFileChip(null);
+              }}
+            >
+              ✕
+            </span>
+          </div>
+        )}
         <textarea
           ref={textRef}
           className="paste"
@@ -266,8 +349,8 @@ export function QuickNotes({
               chars={out.chars}
               showCopy={out.kind === "prose"}
               onCopy={() => void navigator.clipboard?.writeText(currentMarkdown())}
-              onPdf={() => exportPdf(`Trellis — ${out.label}`, currentMarkdown())}
-              onDoc={() => exportDoc(`Trellis — ${out.label}`, currentMarkdown())}
+              onPdf={() => exportPdf(`Edgify — ${out.label}`, currentMarkdown())}
+              onDoc={() => exportDoc(`Edgify — ${out.label}`, currentMarkdown())}
               onRegenerate={() => void generate()}
             />
             <div className="out-body">

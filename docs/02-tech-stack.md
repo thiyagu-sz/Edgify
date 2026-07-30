@@ -139,9 +139,27 @@ across Node, edge and serverless runtimes. **Do not use `pdf-parse`** — it dep
 `canvas`, which needs native bindings that fail to build in serverless and container
 environments and produces confusing deploy-time errors.
 
-**Memory discipline:** `unpdf` holds the parsed document in memory until released. Always
-destroy the document object when extraction finishes, in a `finally` block. Skipping this is
-how a container quietly runs out of memory after a few dozen uploads.
+**Memory discipline:** always release the parsed document when extraction finishes, in a
+`finally` block.
+
+Two corrections to this section, both from measuring rather than reading (2026-07-29, unpdf 1.8):
+
+- **The method is `proxy.loadingTask.destroy()`, not `proxy.destroy()`.** `PDFDocumentProxy` has
+  no `destroy` — it exposes `numPages` and `cleanup()`. Writing the obvious `proxy.destroy()` in a
+  `finally` throws a `TypeError` which, being in a `finally`, *replaces* whatever real error was
+  propagating: "password-protected PDF" surfaces as an unrelated crash.
+- **Skipping the release does not exhaust memory the way this document claimed.** Over 200
+  sequential 25-page parses (`test/e2e/parse-memory.mjs`), heap growth was 1.3 KB/parse with the
+  release and 2.4 KB/parse without; the rss difference was 3.7 MB and plateaued rather than climbing. Under
+  Node's fake worker the proxy becomes unreachable at the end of the iteration and V8 collects it.
+
+  Keep the `finally` anyway: it releases eagerly instead of waiting for a collection that may not
+  come under memory pressure, and it costs nothing. But do not expect removing it to announce
+  itself as a crash — the guarantee is enforced by `lib/parse/pdf.test.ts`, not by symptoms.
+
+**`getDocumentProxy` consumes its input.** pdf.js detaches the `Uint8Array` it is handed, so
+parsing the same array twice fails the second time with "Invalid PDF structure" — a corrupt-file
+message for a valid file. Each upload owns its own buffer and is parsed once.
 
 *No OCR in v1.* Scanned documents are detected (extraction returns almost nothing) and the
 user is told honestly. See `04-resilience.md`.
