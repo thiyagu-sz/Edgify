@@ -26,10 +26,45 @@ Before every commit, scan the staged diff for secret **values** (not variable na
 identifiers like `GOOGLE_CLIENT_SECRET` only produces false positives):
 
 ```bash
-git diff --cached | grep -iE "sk-or-v1|postgres://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https"
+git diff --cached | grep -iE "sk-or-v1-[A-Za-z0-9_-]{20,}|postgres(ql)?://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https"
 ```
 
 If it prints anything, stop and inspect — a real credential may be about to be committed.
+
+Two fixes to this command, both made 2026-07-29 and both verified against sample strings rather
+than assumed:
+
+- **The OpenRouter pattern requires a key body**, not just the `sk-or-v1` prefix. Matching the
+  bare prefix fires on every piece of documentation that shows the key format — `docs/07` has
+  carried such a line since Phase 1 — so it hit on every commit touching those files, and would
+  have hit again on the Phase 7 whole-tree scan. An alert that is always noise is one people
+  learn to wave through, which is worse than not having it. Requiring 20+ key characters loses
+  nothing: a real key is far longer, and a fragment too short to match is not a usable credential.
+- **`postgres://` alone missed real credentials.** Neon issues `postgresql://` URLs, `.env.local`
+  uses that form and `lib/env.ts` explicitly accepts both — and `postgres://` is not a substring
+  of `postgresql://`, so this check had been blind to the exact URL shape this project uses. Now
+  `postgres(ql)?://`.
+
+**Known baseline — three files, and only these three:**
+
+- `.env.example` — its placeholder `postgresql://user:password@…` line.
+- `test/secret-scan.test.ts` — credential-shaped fixtures, which must match or the test proves
+  nothing. Written as `EXAMPLE_*` bodies on RFC 2606 `.invalid` hosts so a hit is dismissible at
+  a glance, and deliberately not obfuscated, so a real key pasted there is still caught.
+- **This file**, whenever the command above is edited: the pattern matches its own text, because
+  `client_secret\s*[:=]\s*[\"'][^\"']+` is itself a `client_secret` assignment. Harmless, and not
+  worth contorting the regex to avoid.
+
+Neither is suppressed. Telling a placeholder from a real credential by regex means trusting the
+literal string `user`, which is a bypass waiting to happen. Treat hits from these two files as
+the baseline and **anything else as real** until inspected.
+
+**This command is covered by `test/secret-scan.test.ts`**, which reads the pattern out of *this
+file* — so the doc stays the source of truth — and asserts both directions: every credential
+shape is caught, and every documentation placeholder is ignored. It also fails if the pattern
+cannot be extracted or is empty, because an empty regex matches every line and would report a
+confident all-clear while checking nothing. Change the command and `npm test` tells you what you
+broke. The `postgresql://` gap above was found that way, not by reading it.
 
 **2. Every database query filters by `userId`.**
 There is no row-level security in this stack. Tenant isolation is enforced in application

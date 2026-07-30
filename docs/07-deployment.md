@@ -16,7 +16,7 @@ missing or malformed value rather than fail mysteriously at request time.
 | `BETTER_AUTH_URL` | `https://edgify-xxx.run.app` | Must match the deployed origin |
 | `GOOGLE_CLIENT_ID` | | Google Cloud console |
 | `GOOGLE_CLIENT_SECRET` | | |
-| `OPENROUTER_API_KEY` | `sk-or-v1-…` | **Server only. Never `NEXT_PUBLIC_`** |
+| `OPENROUTER_API_KEY` | `sk-or-v1-<your-key-here>` | **Server only. Never `NEXT_PUBLIC_`** |
 | `OPENROUTER_FREE_MODEL` | e.g. `openrouter/free` | Free-tier route |
 | `OPENROUTER_FREE_FALLBACKS` | comma-separated ids | Free model ids rotate — keep alternatives |
 | `OPENROUTER_PAID_MODEL` | a budget paid model | Overflow tier |
