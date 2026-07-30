@@ -109,17 +109,20 @@ Upload document in Graph mode
                                      11. Return { graphId } immediately
   │
   ├─ Show the modal with staged progress (as in the prototype)
+  ├─ Fire POST /api/graph/:id/build   (do NOT await — this is the build)
   └─ Poll GET /api/graph/:id every 1.5s
 
-                                     Meanwhile, same request continues:
-                                     12. lib/ai/generate → structure extraction
+                                     POST /api/graph/:id/build:
+                                     12. Session + ownership check; idempotent —
+                                         only proceeds while status = "processing"
+                                     13. lib/ai/generate → structure extraction
                                          (6–9 concepts + prerequisite edges)
-                                     13. Zod validate; repair once; drop dangling
+                                     14. Zod validate; repair once; drop dangling
                                          edges; break cycles
-                                     14. Compute layer-based layout, store x/y/w
-                                     15. Insert concepts + edges
-                                     16. status = "ready"
-                                     On failure at 12–13:
+                                     15. Compute layer-based layout, store x/y/w
+                                     16. Insert concepts + edges
+                                     17. status = "ready"
+                                     On failure at 13–14:
                                          status = "failed", reason logged
   │
   ├─ Poll sees "ready"  → render graph, select first foundational concept
@@ -127,6 +130,22 @@ Upload document in Graph mode
   │                        Quick Notes still works on it." + link
   └─ Poll times out (90s) → busy message + retry
 ```
+
+**Why the build is a second, client-fired request.** Decided 2026-07-29. The obvious reading of
+steps 11–12 is "return the id, then keep working in the same request", which on Next means
+`after()`. That depends on Cloud Run keeping CPU allocated *after* the response is sent — a
+deployment setting this project has not yet configured or verified (Phase 7). If it is wrong, the
+build is throttled or killed mid-flight and every upload silently ends in `failed`, with the cause
+invisible from the application logs.
+
+So the build is its own request: explicit, ownership-checked, and idempotent on
+`status = "processing"` so a double-fire or a retry cannot start two builds or corrupt a finished
+one. `after()` remains the tidier shape and is logged as a Phase 7 optimisation — adopt it only
+once CPU-after-response is confirmed, and keep this route as the fallback.
+
+**Both ladder tiers 5 and 6 land on `failed` here.** Unlike Quick Notes, there is no demo-graph
+substitution: see the note under `graphs` in `03-data-model.md`. The user gets the honest message
+over a document they still own, and Quick Notes still works on it.
 
 Step 8 is the single highest-value line in the system. Ten students in one class upload one
 lecture PDF; nine of them get an instant graph for zero tokens.
@@ -218,7 +237,8 @@ All demo paths:
 |---|---|---|
 | `POST` | `/api/notes/generate` | Streaming Quick Notes |
 | `POST` | `/api/documents/extract` | Extract text, return it, store nothing |
-| `POST` | `/api/documents` | Create document + start graph build |
+| `POST` | `/api/documents` | Create document + graph row, return graphId |
+| `POST` | `/api/graph/:id/build` | Run the structure extraction; idempotent on `processing` |
 | `GET` | `/api/graph/:id` | Graph with concepts and edges; status for polling |
 | `POST` | `/api/concepts/:id/detail` | Lazy concept explanation |
 | `POST` | `/api/mastery` | Upsert mastery state |

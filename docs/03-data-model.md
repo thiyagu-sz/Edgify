@@ -35,13 +35,28 @@ One knowledge graph per document.
 | `documentId` | uuid, fk, not null | |
 | `userId` | text, fk, not null | Denormalised on purpose — avoids a join on every read |
 | `title` | text | Short topic name from the model |
-| `status` | text | `processing` / `ready` / `failed` / `demo` |
+| `status` | text | `processing` / `ready` / `failed` / **`demo` — see below** |
 | `failureReason` | text, nullable | Internal only, never shown to the user |
 | `promptVersion` | text, not null | |
 | `modelId` | text, not null | |
 | `createdAt` | timestamptz | |
 
 Indexes: `(userId, createdAt desc)`, `(documentId)`
+
+> **`status = "demo"` is reserved for the Phase 6 `/demo` route, and is never written by the
+> authenticated build path.** Decided 2026-07-29.
+>
+> The degradation ladder's tier 5 does *not* apply to graph structure. A Quick Notes demo is a
+> banner above a transient panel; a graph demo would be **rows** — concepts and edges persisted
+> under the user's own `graphId`, describing a document they never uploaded. Once those rows
+> exist, a banner does not undo them, and "passing off generic sample content as an analysis of
+> the user's own document" is the one genuinely bad outcome `04-resilience.md` §2 names.
+>
+> So on the authenticated path both tier 5 and tier 6 collapse to `status = "failed"`, which
+> surfaces the honest W4 message. `lib/demo/index.ts` enforces this by not answering
+> `graph_structure` at all, so the ladder cannot reach a demo graph even by accident. `DEMO_GRAPH`
+> stays exported for `/demo`, where nothing is persisted and there is no user document to
+> misrepresent.
 
 ### `concepts`
 Nodes of the graph. `detailJson` is null until the user first clicks the concept.

@@ -18,9 +18,14 @@ describe("demoContentFor", () => {
     expect(demoContentFor({ operation: "quick_notes", format: "nope" })).toBeNull();
   });
 
-  it("returns the curated graph for a graph request", () => {
-    const out = demoContentFor({ operation: "graph_structure", format: "" });
-    expect(out).toBe(DEMO_GRAPH);
+  /**
+   * The ladder must NOT substitute a curated graph for a user's own document. Unlike a notes
+   * demo, the graph build persists concepts and edges under the user's `graphId`, so a demo graph
+   * would become rows in their workspace claiming to describe the file they uploaded. Tier 6
+   * (`failed` + the honest W4 message) is the correct landing.
+   */
+  it("returns null for a graph request — a demo graph is never written to a user's records", () => {
+    expect(demoContentFor({ operation: "graph_structure", format: "" })).toBeNull();
   });
 
   it("returns null for an unknown operation", () => {

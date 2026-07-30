@@ -29,7 +29,7 @@ GROUP BY 1,2,3 ORDER BY 1 DESC;
 minutes a week:
 
 ```bash
-pg_dump "$DATABASE_URL" -Fc -f "trellis-$(date +%F).dump"
+pg_dump "$DATABASE_URL" -Fc -f "edgify-$(date +%F).dump"
 ```
 
 Keep the last four somewhere that is not the same cloud account.
@@ -67,7 +67,7 @@ Cloud Billing Budget ──threshold exceeded──▶ Pub/Sub topic ──▶ C
 Source: [`infra/billing-cap/`](../infra/billing-cap/). Identifiers used below:
 
 ```bash
-PROJECT_ID=trellis-prod; BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
+PROJECT_ID=edgify-prod; BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
 TOPIC=billing-alerts;     REGION=us-central1
 ```
 
@@ -91,7 +91,7 @@ TOPIC=billing-alerts;     REGION=us-central1
    alpha/beta tracks):
    ```bash
    gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
-     --display-name="trellis-hard-cap" --budget-amount=50USD \
+     --display-name="edgify-hard-cap" --budget-amount=50USD \
      --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
      --notifications-rule-pubsub-topic="projects/$PROJECT_ID/topics/$TOPIC"
    ```

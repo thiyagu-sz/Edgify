@@ -76,7 +76,19 @@ Unglamorous, early, and the reason nothing catches fire later.
   session and quota reads, so it cannot do expensive work either.
 
 **Acceptance criteria**
-- [ ] A test billing alert actually fires
+- [ ] **A test billing alert actually fires — NEVER RUN. The oldest open safety gap in the
+      project.** Deferred during Phase 2 and never picked up; confirmed 2026-07-29 by tracing
+      back through the work. The cap function exists (`infra/billing-cap/`) and the runbook is
+      written (docs/08), but no GCP project has been created and the drill has not been executed
+      once — which is why `PROJECT_ID` and the budget display name were free to be renamed to
+      `edgify-*`: they name resources that do not exist yet.
+
+      Not blocking Phase 5. But Phase 3 onward spends real money, and the entire billing-cap
+      apparatus exists so that a 3am retry loop cannot drain the account. Reaching Phase 7 with
+      the cap **built but never once fired** is the largest unverified risk in the build:
+      "the billing cap works" is currently an assumption, not a tested fact — the only major
+      claim here that has not been checked against reality the way everything else has. Needs a
+      clear half hour. Also gated at launch by docs/09.
 - [ ] Isolation test: user A's document is invisible to user B through **every** query function
 - [ ] Quota increments, enforces at the limit, and resets at day boundary
 - [ ] An unauthenticated route rejects a burst of requests
@@ -241,7 +253,16 @@ someone should open one before launch.
 - Scanned-document detection
 - `POST /api/documents/extract` and `POST /api/documents`
 - Graph structure extraction, validation, cycle-breaking, layout computation
+- `POST /api/graph/:id/build` — the build runs as its own client-fired request, ownership-checked
+  and idempotent on `status = "processing"`. **Not `after()`**, which depends on Cloud Run
+  CPU-after-response — unverified here, and if it is wrong every upload silently ends in `failed`.
+  Logged as a Phase 7 optimisation instead (docs/05 W4)
 - `GET /api/graph/:id` with polling
+- **Graph failures never serve demo content.** Ladder tiers 5 and 6 both collapse to
+  `status = "failed"` + the W4 message. A graph demo would be persisted rows under the user's own
+  `graphId` describing a document they never uploaded — `lib/demo/index.ts` therefore does not
+  answer `graph_structure` at all, so the ladder cannot reach one by accident. `DEMO_GRAPH` is
+  reserved for Phase 6's `/demo` (docs/03 §graphs)
 - Port the graph UI: SVG, panel, concept library, study plan, progress modal
 - Lazy concept detail
 - Mastery tracking
@@ -290,6 +311,13 @@ someone should open one before launch.
 - Sentry release tracking
 - Internal usage dashboard from `usage_ledger`
 - Load test at 25 concurrent (2.5x target)
+- **Confirm Cloud Run keeps CPU allocated after the response is sent.** Phase 5 deliberately made
+  the graph build a separate client-fired request (`POST /api/graph/:id/build`) rather than using
+  Next's `after()`, because `after()` silently depends on this setting and a wrong guess ends every
+  upload in `failed` with no application-level symptom. Once confirmed, folding the build back into
+  `POST /api/documents` via `after()` removes a round trip and a client responsibility — an
+  optimisation to adopt *after* verification, keeping the build route as the fallback. Do not
+  reverse the order (docs/05 W4)
 
 **Acceptance criteria**
 - [ ] Deployed and reachable over HTTPS

@@ -13,7 +13,7 @@ missing or malformed value rather than fail mysteriously at request time.
 |---|---|---|
 | `DATABASE_URL` | `postgresql://…-pooler…` | Neon **pooled** connection string |
 | `BETTER_AUTH_SECRET` | random 32+ bytes | `openssl rand -base64 32` |
-| `BETTER_AUTH_URL` | `https://trellis-xxx.run.app` | Must match the deployed origin |
+| `BETTER_AUTH_URL` | `https://edgify-xxx.run.app` | Must match the deployed origin |
 | `GOOGLE_CLIENT_ID` | | Google Cloud console |
 | `GOOGLE_CLIENT_SECRET` | | |
 | `OPENROUTER_API_KEY` | `sk-or-v1-…` | **Server only. Never `NEXT_PUBLIC_`** |
@@ -70,7 +70,7 @@ unhelpful message.
 ## Cloud Run service
 
 ```bash
-gcloud run deploy trellis \
+gcloud run deploy edgify \
   --source . \
   --region asia-south1 \
   --allow-unauthenticated \
@@ -79,9 +79,9 @@ gcloud run deploy trellis \
   --concurrency 40 \
   --cpu 1 --memory 1Gi \
   --timeout 300 \
-  --set-secrets DATABASE_URL=trellis-db-url:latest,\
-OPENROUTER_API_KEY=trellis-openrouter:latest,\
-BETTER_AUTH_SECRET=trellis-auth-secret:latest
+  --set-secrets DATABASE_URL=edgify-db-url:latest,\
+OPENROUTER_API_KEY=edgify-openrouter:latest,\
+BETTER_AUTH_SECRET=edgify-auth-secret:latest
 ```
 
 Reasoning for each setting:
@@ -172,7 +172,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: trellis
+          service: edgify
           source: .
           region: asia-south1
 ```
