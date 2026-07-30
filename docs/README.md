@@ -1,6 +1,6 @@
-# Trellis — Implementation Documentation
+# Edgify — Implementation Documentation
 
-Complete build specification for Trellis, an academic study workspace with two features:
+Complete build specification for Edgify, an academic study workspace with two features:
 **Quick Notes** (fast, high-yield exam revision) and **Knowledge Graph** (deep understanding
 from an uploaded document).
 
@@ -65,7 +65,7 @@ again in a moment."* Never a stack trace, never an HTTP status code, never a ven
 This is specified in full in `04-resilience.md`.
 
 **2. The prototype is the visual specification.**
-`trellis-prototype.html` defines the design exactly: the dark Fluxora landing page, the light
+`edgify-prototype.html` defines the design exactly: the dark Fluxora landing page, the light
 workspace, the two-feature switcher, the graph rendering, the panel behaviour. Port it
 faithfully. Do not redesign it, do not "improve" it, do not substitute a component library's
 default styling.

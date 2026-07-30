@@ -22,7 +22,7 @@ import pg from "pg";
  *         node test/e2e/seed-session.mjs --cleanup  → removes previously seeded e2e users
  */
 
-const E2E_EMAIL_DOMAIN = "e2e.trellis.invalid";
+const E2E_EMAIL_DOMAIN = "e2e.edgify.invalid";
 
 function readEnv() {
   const url = process.env.DATABASE_URL;

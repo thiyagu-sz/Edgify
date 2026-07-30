@@ -6,4 +6,4 @@ import { join } from "node:path";
  * and writes the connection string here) and the per-worker `setupFiles` (which reads it and
  * sets `DATABASE_URL` before `lib/db/client.ts` is imported and builds its pool).
  */
-export const DB_URL_FILE = join(tmpdir(), "trellis-test-db-url");
+export const DB_URL_FILE = join(tmpdir(), "edgify-test-db-url");

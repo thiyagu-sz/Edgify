@@ -4,7 +4,7 @@ import "./globals.css";
 
 /**
  * The prototype loads Inter and JetBrains Mono and binds them to `--sans` / `--mono`
- * (docs/reference/trellis-prototype.html head). The theme ported into globals.css asks for those
+ * (docs/reference/edgify-prototype.html head). The theme ported into globals.css asks for those
  * two families by name, so loading anything else silently falls the whole workspace back to
  * system-ui and no text matches the visual specification (.claude/rules/ui.md).
  *
@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trellis",
+  title: "Edgify",
   description: "Academic study workspace — Quick Notes and Knowledge Graph.",
 };
 

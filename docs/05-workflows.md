@@ -16,7 +16,7 @@ Landing page (dark) → "Launch workspace"
 ```
 
 The landing page and demo mode must work **without** a session. Someone should be able to
-evaluate Trellis before creating an account.
+evaluate Edgify before creating an account.
 
 ---
 

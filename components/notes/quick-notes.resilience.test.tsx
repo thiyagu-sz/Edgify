@@ -182,7 +182,7 @@ describe("other server states", () => {
     await generate({
       kind: "message",
       message:
-        "That's more than Trellis can take at once. Trim it to about 40,000 characters and try again.",
+        "That's more than Edgify can take at once. Trim it to about 40,000 characters and try again.",
     });
     await waitFor(() => {
       expect(screen.getByText("Check the source material")).toBeVisible();

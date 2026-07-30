@@ -188,7 +188,7 @@ the same document. No user can enumerate or browse the cache, and no key reveals
 about the content.
 
 Two practical rules: never expose cache keys in an API response, and never build a "recently
-generated" feature over this table. If Trellis ever handles genuinely confidential documents
+generated" feature over this table. If Edgify ever handles genuinely confidential documents
 rather than coursework, revisit this and scope the cache per user.
 
 ---

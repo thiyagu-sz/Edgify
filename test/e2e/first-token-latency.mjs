@@ -95,8 +95,8 @@ async function measureFirstToken(index) {
   });
 
   const headersAt = performance.now() - started;
-  const kind = res.headers.get("X-Trellis-Kind");
-  const tier = res.headers.get("X-Trellis-Tier");
+  const kind = res.headers.get("X-Edgify-Kind");
+  const tier = res.headers.get("X-Edgify-Tier");
 
   if (kind !== "stream") {
     const body = await res.json().catch(() => ({}));

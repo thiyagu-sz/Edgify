@@ -46,7 +46,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function docHtmlFor(markdown: string, title = "Trellis — Key Points"): Promise<string> {
+async function docHtmlFor(markdown: string, title = "Edgify — Key Points"): Promise<string> {
   exportDoc(title, markdown);
   expect(blobs).toHaveLength(1);
   return await blobs[0].blob.text();
@@ -113,7 +113,7 @@ describe("exportPdf — text only, never markup", () => {
 
   beforeEach(() => {
     originalCwd = process.cwd();
-    tmpDir = mkdtempSync(join(tmpdir(), "trellis-pdf-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "edgify-pdf-"));
     process.chdir(tmpDir);
   });
 
@@ -130,7 +130,7 @@ describe("exportPdf — text only, never markup", () => {
   }
 
   it("emits a PDF with no executable object at all", () => {
-    const raw = pdfBytes("Trellis — Key Points", ALL_PAYLOADS_COMBINED);
+    const raw = pdfBytes("Edgify — Key Points", ALL_PAYLOADS_COMBINED);
     expect(raw.startsWith("%PDF-")).toBe(true);
 
     // PDF carries its own scripting surface, quite separate from HTML. The export path never
@@ -152,7 +152,7 @@ describe("exportPdf — text only, never markup", () => {
   });
 
   it("renders headings and bullets as text, stripping markdown syntax", () => {
-    const raw = pdfBytes("Trellis — Key Points", "# Heading\n\n- **bold** item");
+    const raw = pdfBytes("Edgify — Key Points", "# Heading\n\n- **bold** item");
     expect(raw).toContain("Heading");
     expect(raw).toContain("bold item");
     // The `**` markers are stripped before the text reaches the page.
@@ -161,7 +161,7 @@ describe("exportPdf — text only, never markup", () => {
 
   it("does not throw on any payload in the corpus", () => {
     for (const { name, payload } of XSS_PAYLOADS) {
-      expect(() => exportPdf("Trellis — Key Points", payload), name).not.toThrow();
+      expect(() => exportPdf("Edgify — Key Points", payload), name).not.toThrow();
     }
   });
 });

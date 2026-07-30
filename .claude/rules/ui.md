@@ -9,7 +9,7 @@ paths:
 
 ## The prototype is the visual specification
 
-`docs/reference/trellis-prototype.html` defines the design exactly: the dark
+`docs/reference/edgify-prototype.html` defines the design exactly: the dark
 landing page, the light workspace, the two-feature switcher, the graph rendering,
 the panel scroll behaviour.
 

@@ -97,7 +97,7 @@ async function proveXssProse(browser, cookie) {
   await page.route("**/api/notes/generate", (route) =>
     route.fulfill({
       status: 200,
-      headers: { "X-Trellis-Kind": "stream", "X-Trellis-Tier": "free" },
+      headers: { "X-Edgify-Kind": "stream", "X-Edgify-Tier": "free" },
       contentType: "text/plain; charset=utf-8",
       body: `## Notes\n\n${combined}`,
     }),
@@ -156,7 +156,7 @@ async function proveXssQuiz(browser, cookie) {
   await page.route("**/api/notes/generate", (route) =>
     route.fulfill({
       status: 200,
-      headers: { "X-Trellis-Kind": "final" },
+      headers: { "X-Edgify-Kind": "final" },
       contentType: "application/json",
       body: JSON.stringify({ data: quiz, tier: "free", notice: null }),
     }),
@@ -198,7 +198,7 @@ async function proveFirstPaint(browser, cookie) {
     await new Promise((r) => setTimeout(r, SERVER_DELAY_MS));
     await route.fulfill({
       status: 200,
-      headers: { "X-Trellis-Kind": "stream", "X-Trellis-Tier": "free" },
+      headers: { "X-Edgify-Kind": "stream", "X-Edgify-Tier": "free" },
       contentType: "text/plain; charset=utf-8",
       body: "## Key points\n\n- Backpropagation applies the chain rule.\n- Gradient descent lowers the loss.",
     });

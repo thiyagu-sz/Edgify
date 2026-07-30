@@ -15,7 +15,7 @@ import { applyTestEnvDefaults } from "./test-env";
  * that reaches the network without the test arranging it fails loudly instead of silently
  * hitting a real route.
  */
-process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/trellis_component";
+process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/edgify_component";
 applyTestEnvDefaults();
 
 /**

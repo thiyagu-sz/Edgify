@@ -2,7 +2,7 @@ import { jsPDF } from "jspdf";
 import { renderMarkdown } from "./sanitize";
 
 /**
- * Client-side export, ported from docs/reference/trellis-prototype.html (W7, docs/05). No server
+ * Client-side export, ported from docs/reference/edgify-prototype.html (W7, docs/05). No server
  * cost, no failure mode. PDF via jsPDF (walks the markdown line by line as plain text — no HTML
  * is ever executed); DOC via a Word-compatible HTML blob downloaded as `.doc`.
  */
@@ -21,7 +21,7 @@ function slug(s: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
-      .slice(0, 44) || "trellis"
+      .slice(0, 44) || "edgify"
   );
 }
 

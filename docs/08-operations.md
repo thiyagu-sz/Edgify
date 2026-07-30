@@ -1,6 +1,6 @@
 # 08 — Operations (after production)
 
-Running Trellis once it is live. Deliberately lightweight — at ten users, most "monitoring"
+Running Edgify once it is live. Deliberately lightweight — at ten users, most "monitoring"
 is looking at two numbers once a week.
 
 ---

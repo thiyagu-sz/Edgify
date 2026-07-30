@@ -7,7 +7,7 @@ import { auth } from "@/lib/auth";
  * Protected route group. The session check runs on the server, so unauthenticated users are
  * redirected before any protected content is sent to the browser.
  *
- * `.trellis-workspace` scopes the light workspace theme (app/globals.css) and hosts the shared
+ * `.edgify-workspace` scopes the light workspace theme (app/globals.css) and hosts the shared
  * TopBar chrome, so every authenticated page inherits the ported design.
  */
 export default async function AppLayout({
@@ -20,7 +20,7 @@ export default async function AppLayout({
     redirect("/sign-in");
   }
   return (
-    <div className="trellis-workspace">
+    <div className="edgify-workspace">
       <TopBar />
       {children}
     </div>

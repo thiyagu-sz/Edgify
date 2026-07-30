@@ -4,7 +4,7 @@ import { vi } from "vitest";
  * A fake `/api/notes/generate` + `/api/usage` for component tests.
  *
  * It speaks the route's real wire contract (app/api/notes/generate/route.ts): the client branches
- * on the `X-Trellis-Kind` header, reads a text stream for `stream`, and JSON for everything else.
+ * on the `X-Edgify-Kind` header, reads a text stream for `stream`, and JSON for everything else.
  * Keeping that contract in one place means a change to the route breaks these tests loudly rather
  * than leaving them passing against a shape the server no longer sends.
  *
@@ -28,7 +28,7 @@ export type NotesResponseSpec =
   | { kind: "reject"; error?: Error }
   /** Stream opens and never produces a token, and never closes. The hang case. */
   | { kind: "hang" }
-  /** 200 with no X-Trellis-Kind header at all — an unexpected intermediary. */
+  /** 200 with no X-Edgify-Kind header at all — an unexpected intermediary. */
   | { kind: "empty-200" }
   /** Claims `final` but the body is not JSON. */
   | { kind: "bad-json" };
@@ -46,8 +46,8 @@ function streamResponse(chunks: string[], tier: string, signal?: AbortSignal): R
     },
   });
   return responseLike(body, {
-    "X-Trellis-Kind": "stream",
-    "X-Trellis-Tier": tier,
+    "X-Edgify-Kind": "stream",
+    "X-Edgify-Tier": tier,
   }, signal);
 }
 
@@ -65,7 +65,7 @@ function hangingResponse(signal?: AbortSignal): Response {
       });
     },
   });
-  return responseLike(body, { "X-Trellis-Kind": "stream", "X-Trellis-Tier": "free" }, signal);
+  return responseLike(body, { "X-Edgify-Kind": "stream", "X-Edgify-Tier": "free" }, signal);
 }
 
 function responseLike(
@@ -80,7 +80,7 @@ function responseLike(
 function jsonResponse(kind: string, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { "Content-Type": "application/json", "X-Trellis-Kind": kind },
+    headers: { "Content-Type": "application/json", "X-Edgify-Kind": kind },
   });
 }
 
@@ -113,7 +113,7 @@ function buildNotesResponse(spec: NotesResponseSpec, signal?: AbortSignal): Resp
     case "bad-json":
       return new Response("<!doctype html><html>not json</html>", {
         status: 200,
-        headers: { "X-Trellis-Kind": "final" },
+        headers: { "X-Edgify-Kind": "final" },
       });
     case "reject":
       throw spec.error ?? new TypeError("Failed to fetch");

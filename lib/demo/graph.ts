@@ -1,6 +1,6 @@
 /**
  * The curated machine-learning knowledge graph, lifted verbatim from the prototype
- * (docs/reference/trellis-prototype.html `CURATED`). Served in demo mode and when the ladder
+ * (docs/reference/edgify-prototype.html `CURATED`). Served in demo mode and when the ladder
  * falls through for a graph request (docs/04 §2). Static data — costs nothing at runtime and
  * never fails.
  */

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
  * wording — a model's prose cannot be asserted, but "did the summary come back as bullet points"
  * and "did the quiz come back gradeable" can be, and those are the failures that actually occur.
  *
- * Note the count: the prototype defines EIGHT formats (docs/reference/trellis-prototype.html
+ * Note the count: the prototype defines EIGHT formats (docs/reference/edgify-prototype.html
  * FORMATS). docs/06 Phase 4 says "all nine formats"; there is no ninth, and none was invented.
  *
  * Usage: SESSION_COOKIE=<name=value> node --env-file=.env.local test/e2e/all-formats.mjs
@@ -57,9 +57,9 @@ async function run(format) {
     body: JSON.stringify({ text, format }),
   });
 
-  const kind = res.headers.get("X-Trellis-Kind");
+  const kind = res.headers.get("X-Edgify-Kind");
   if (kind === "stream") {
-    return { kind, tier: res.headers.get("X-Trellis-Tier"), text: await res.text() };
+    return { kind, tier: res.headers.get("X-Edgify-Tier"), text: await res.text() };
   }
   const body = await res.json().catch(() => ({}));
   return { kind, tier: body.tier, notice: body.notice, data: body.data, message: body.message };

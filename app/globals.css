@@ -23,11 +23,11 @@ body {
 }
 
 /* ============================================================================
-   Trellis workspace theme — ported verbatim from docs/reference/trellis-prototype.html.
+   Edgify workspace theme — ported verbatim from docs/reference/edgify-prototype.html.
    The prototype is the visual specification (.claude/rules/ui.md); tokens and component
    classes are carried over unchanged so the render matches side by side. The workspace is
    LIGHT; the dark landing tokens (scoped to #landing) arrive in Phase 6. Everything below is
-   scoped to .trellis-workspace or to uniquely-named component classes, so the sign-in and
+   scoped to .edgify-workspace or to uniquely-named component classes, so the sign-in and
    marketing pages are untouched.
    ============================================================================ */
 :root {
@@ -49,20 +49,20 @@ body {
 
 /* Base rules from the prototype's reset that Tailwind's preflight does not reproduce. Scoped to
    the workspace so the marketing and sign-in pages keep Tailwind's defaults. */
-.trellis-workspace a { color: inherit; text-decoration: none; }
-.trellis-workspace textarea { font-family: inherit; }
+.edgify-workspace a { color: inherit; text-decoration: none; }
+.edgify-workspace textarea { font-family: inherit; }
 
 /* Tailwind's preflight sets `line-height: inherit` on form controls; the prototype's button
    reset does not, so its buttons keep the initial `normal`. That single difference made every
    format chip 4.25px taller (13.5px × 1.5 = 20.25px instead of normal), and two rows of chips
    pushed the description, the Generate button and the hint down by 8.5px — measured, not
    guessed (test/e2e/measure-geometry.mjs). Restore the prototype's behaviour. */
-.trellis-workspace button { line-height: normal; }
-.trellis-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
-.trellis-workspace ::-webkit-scrollbar-thumb { background: var(--surface-strong); border-radius: 8px; border: 3px solid var(--canvas); }
-.trellis-workspace ::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
+.edgify-workspace button { line-height: normal; }
+.edgify-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
+.edgify-workspace ::-webkit-scrollbar-thumb { background: var(--surface-strong); border-radius: 8px; border: 3px solid var(--canvas); }
+.edgify-workspace ::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
 
-.trellis-workspace {
+.edgify-workspace {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -74,7 +74,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-.trellis-workspace :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: var(--r-sm); }
+.edgify-workspace :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: var(--r-sm); }
 
 .topbar { height: 64px; background: var(--canvas); border-bottom: 1px solid var(--hairline);
   display: flex; align-items: center; gap: var(--sp-lg); padding: 0 var(--sp-lg); position: sticky; top: 0; z-index: 20; }
@@ -106,7 +106,7 @@ body {
 .btn-secondary:hover { background: var(--surface-soft); }
 .btn-secondary svg { width: 15px; height: 15px; }
 
-.trellis-workspace main { flex: 1; max-width: 1240px; width: 100%; margin: 0 auto; padding: var(--sp-lg); }
+.edgify-workspace main { flex: 1; max-width: 1240px; width: 100%; margin: 0 auto; padding: var(--sp-lg); }
 .feature[hidden] { display: none; }
 .card { background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-xl); }
 .view-head { margin-bottom: var(--sp-lg); }
@@ -230,7 +230,7 @@ textarea.paste::placeholder { color: var(--muted-soft); }
   .pill-group { order: 3; width: 100%; justify-content: center; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .trellis-workspace *, .trellis-workspace *::before, .trellis-workspace *::after {
+  .edgify-workspace *, .edgify-workspace *::before, .edgify-workspace *::after {
     transition: none !important;
     animation: none !important;
   }

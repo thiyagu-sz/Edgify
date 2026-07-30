@@ -6,5 +6,5 @@ import { applyTestEnvDefaults } from "./test-env";
  * `QUOTA_TIMEZONE`) validate cleanly. Nothing here ever opens a connection — unit tests do not
  * run queries.
  */
-process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/trellis_unit";
+process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/edgify_unit";
 applyTestEnvDefaults();

@@ -2,7 +2,7 @@
 
 ## Design principle
 
-Trellis is a small system with one unusual property: **every meaningful user action triggers a
+Edgify is a small system with one unusual property: **every meaningful user action triggers a
 slow, metered, third-party call that can fail.** Almost every architectural decision follows
 from that, not from traffic volume. At ten concurrent users, throughput is a non-issue;
 failure handling and cost control are the entire job.

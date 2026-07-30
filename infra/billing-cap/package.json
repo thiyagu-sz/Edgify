@@ -1,5 +1,5 @@
 {
-  "name": "trellis-billing-cap",
+  "name": "edgify-billing-cap",
   "version": "1.0.0",
   "private": true,
   "description": "Pub/Sub-triggered Cloud Function that disables project billing when a budget is exceeded.",

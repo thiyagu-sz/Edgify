@@ -3,7 +3,7 @@ import { parseEnv } from "./env";
 
 function validEnv(): Record<string, string | undefined> {
   return {
-    DATABASE_URL: "postgresql://user:pass@ep-cool-pooler.neon.tech/trellis",
+    DATABASE_URL: "postgresql://user:pass@ep-cool-pooler.neon.tech/neondb",
     BETTER_AUTH_SECRET: "0123456789abcdef0123456789abcdef",
     BETTER_AUTH_URL: "http://localhost:3000",
     GOOGLE_CLIENT_ID: "google-client-id",

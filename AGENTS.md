@@ -6,7 +6,7 @@ Place this file at the repository root. Read it before writing any code.
 
 ## Project
 
-Trellis: an academic study workspace. Two features — **Quick Notes** (short, high-yield exam
+Edgify: an academic study workspace. Two features — **Quick Notes** (short, high-yield exam
 revision from pasted or uploaded material) and **Knowledge Graph** (concept dependency graph
 built from an uploaded document, with per-concept explanations).
 
@@ -51,7 +51,7 @@ Models return malformed JSON. `JSON.parse` without a schema check is a bug. Pars
 and on failure follow the repair-then-fallback path in `docs/04-resilience.md`.
 
 **6. The prototype is the visual specification.**
-`docs/reference/trellis-prototype.html` defines the design. Port its markup and CSS custom
+`docs/reference/edgify-prototype.html` defines the design. Port its markup and CSS custom
 properties faithfully into React components and the Tailwind theme. Do not redesign.
 
 ---

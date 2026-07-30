@@ -16,7 +16,7 @@ export default function SignInPage() {
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
       <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Trellis</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Edgify</h1>
         <p className="text-sm text-zinc-500">Sign in to your study workspace.</p>
       </div>
       <button

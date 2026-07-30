@@ -10,7 +10,7 @@ import { chromium } from "playwright";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const PROTOTYPE = pathToFileURL(join(repoRoot, "docs/reference/trellis-prototype.html")).href;
+const PROTOTYPE = pathToFileURL(join(repoRoot, "docs/reference/edgify-prototype.html")).href;
 const APP = process.env.APP_URL ?? "http://localhost:3000/notes";
 
 const SELECTORS = [

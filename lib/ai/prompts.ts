@@ -1,6 +1,6 @@
 /**
  * Versioned prompt templates, ported from the prototype (`SYSTEM_NOTES` / `FORMATS`,
- * docs/reference/trellis-prototype.html). Bump `PROMPT_VERSION` (env) whenever these change so
+ * docs/reference/edgify-prototype.html). Bump `PROMPT_VERSION` (env) whenever these change so
  * the generation cache invalidates old output (docs/08 §changing prompts).
  *
  * Prompt-injection safety (docs/09 §2.3): the source material is untrusted input. It is placed
@@ -9,7 +9,7 @@
  */
 
 export const SYSTEM_NOTES =
-  "You are Trellis Quick Notes, built for fast revision the night before an exam. Turn the " +
+  "You are Edgify Quick Notes, built for fast revision the night before an exam. Turn the " +
   "source material into SHORT, high-yield notes containing ONLY the most important, most " +
   "testable points. Be concise and scannable: prefer tight bullet points, keep each point to a " +
   "clause or one short sentence, and cut everything non-essential. Never pad or repeat. Output " +

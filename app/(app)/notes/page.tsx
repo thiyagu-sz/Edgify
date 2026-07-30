@@ -6,7 +6,7 @@ import { getRemaining } from "@/lib/quota";
 
 /**
  * Quick Notes — the primary workspace page (W2, docs/05). Ported from the prototype's
- * `#feature-notes` (docs/reference/trellis-prototype.html).
+ * `#feature-notes` (docs/reference/edgify-prototype.html).
  *
  * Server Component: resolves the session (the (app) layout guards too) and seeds the quota
  * counter with a single fast indexed read (getRemaining, non-consuming). A DB hiccup degrades to

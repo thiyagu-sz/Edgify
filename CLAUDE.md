@@ -1,4 +1,4 @@
-# Trellis
+# Edgify
 
 Academic study workspace. Full spec in `docs/`.
 

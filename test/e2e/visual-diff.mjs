@@ -6,7 +6,7 @@ import { PNG } from "pngjs";
 import { chromium } from "playwright";
 
 /**
- * Phase 4 acceptance: "side-by-side with trellis-prototype.html, the UI is visually
+ * Phase 4 acceptance: "side-by-side with edgify-prototype.html, the UI is visually
  * indistinguishable".
  *
  * Renders the SAME state in both the prototype and the real app and pixel-diffs the Quick Notes
@@ -28,7 +28,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const OUT_DIR = join(repoRoot, ".artifacts", "visual-diff");
 const PROTOTYPE = pathToFileURL(
-  join(repoRoot, "docs", "reference", "trellis-prototype.html"),
+  join(repoRoot, "docs", "reference", "edgify-prototype.html"),
 ).href;
 const APP = process.env.APP_URL ?? "http://localhost:3000/notes";
 
@@ -128,7 +128,7 @@ const protoStates = {
       ({ markdown }) => {
         document.getElementById("sampleBtn").click();
         const fmt = FORMATS.find((f) => f.id === "key_points");
-        lastExport = { title: "Trellis — " + fmt.label, md: markdown };
+        lastExport = { title: "Edgify — " + fmt.label, md: markdown };
         const html = marked.parse(markdown);
         setOutput(
           outputHeader(fmt) + `<div class="out-body"><div class="prose">${html}</div></div>`,
@@ -196,7 +196,7 @@ const appStates = {
     await page.route("**/api/notes/generate", (route) =>
       route.fulfill({
         status: 200,
-        headers: { "X-Trellis-Kind": "stream", "X-Trellis-Tier": "free" },
+        headers: { "X-Edgify-Kind": "stream", "X-Edgify-Tier": "free" },
         contentType: "text/plain; charset=utf-8",
         body: markdown,
       }),
@@ -210,7 +210,7 @@ const appStates = {
     await page.route("**/api/notes/generate", (route) =>
       route.fulfill({
         status: 200,
-        headers: { "X-Trellis-Kind": "final" },
+        headers: { "X-Edgify-Kind": "final" },
         contentType: "application/json",
         body: JSON.stringify({ data: quiz, tier: "free", notice: null }),
       }),
@@ -233,7 +233,7 @@ const appStates = {
     await page.route("**/api/notes/generate", (route) =>
       route.fulfill({
         status: 200,
-        headers: { "X-Trellis-Kind": "busy" },
+        headers: { "X-Edgify-Kind": "busy" },
         contentType: "application/json",
         body: JSON.stringify({ message: "Server is busy, please try again in a moment." }),
       }),
