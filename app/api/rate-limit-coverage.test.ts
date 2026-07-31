@@ -40,7 +40,10 @@ describe("rate limiting: coverage", () => {
       const rel = relative(process.cwd(), file);
       if (EXEMPT.some((e) => rel.startsWith(e))) continue;
       const source = readFileSync(file, "utf8");
-      if (!source.includes("withRateLimit(")) unwrapped.push(rel);
+      // Allow an explicit type argument: dynamic routes pin the route context, e.g.
+      // `withRateLimit<RouteContext>("graph-read", handler)`. A bare `includes("withRateLimit(")`
+      // missed those and reported the Phase 5 graph routes as unwrapped when they were not.
+      if (!/\bwithRateLimit\s*(<[^>]*>)?\s*\(/.test(source)) unwrapped.push(rel);
     }
     expect(
       unwrapped,

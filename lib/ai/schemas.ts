@@ -35,6 +35,59 @@ export function sanitizeQuiz(raw: unknown): Quiz | null {
   return { questions };
 }
 
+// ── Concept detail (W5 — lazy, per-concept explanation) ─────────────────────
+export const flashcardSchema = z.object({
+  front: z.string().min(1),
+  back: z.string().default(""),
+});
+export const conceptDetailSchema = z.object({
+  definition: z.string().default(""),
+  example: z.string().default(""),
+  /** Optional: a detail without a usable check question is still worth rendering. */
+  quiz: quizQuestionSchema.nullish(),
+  flashcards: z.array(flashcardSchema).default([]),
+});
+export type ConceptDetail = {
+  definition: string;
+  example: string;
+  quiz: z.infer<typeof quizQuestionSchema> | null;
+  flashcards: z.infer<typeof flashcardSchema>[];
+};
+
+/**
+ * Parse + sanitise a concept detail (docs/04 §3).
+ *
+ * The DEFINITION is the load-bearing field — it is what the panel exists to show — so an empty or
+ * whitespace-only one is a failure, not a successful empty result, and returns null so the ladder
+ * moves on. Everything else degrades in place rather than failing the whole detail:
+ *  - a quiz whose `answer` index falls outside its options is DROPPED (the same guard as the
+ *    Quick Notes quiz), because one bad question should not cost the user their explanation,
+ *  - flashcards with an empty front are dropped individually.
+ */
+export function sanitizeConceptDetail(raw: unknown): ConceptDetail | null {
+  const parsed = conceptDetailSchema.safeParse(raw);
+  if (!parsed.success) return null;
+
+  const definition = parsed.data.definition.trim();
+  if (definition.length === 0) return null;
+
+  const candidate = parsed.data.quiz;
+  const quiz =
+    candidate &&
+    candidate.q.trim().length > 0 &&
+    candidate.answer >= 0 &&
+    candidate.answer < candidate.options.length
+      ? candidate
+      : null;
+
+  return {
+    definition,
+    example: parsed.data.example.trim(),
+    quiz,
+    flashcards: parsed.data.flashcards.filter((c) => c.front.trim().length > 0),
+  };
+}
+
 // ── Knowledge graph (used fully in Phase 5; guards built + tested now) ───────
 export const graphConceptSchema = z.object({
   slug: z.string().min(1),

@@ -84,6 +84,74 @@ An untested backup is not a backup.
 - [ ] The restore procedure is written down in `08-operations.md` terms you could follow while stressed
 - [ ] At least one backup is stored outside the same cloud account
 
+### 1.6 The graph build cannot outlive its own request
+
+**Found 2026-07-30 by the first live end-to-end timing run (docs/06 Phase 5). Two coupled
+defects, not a tuning note.** The happy-path measurement — median 73.7s for a 30-page PDF —
+**cannot see either of them**, because all five runs answered on the first rung at the first
+attempt (`tier: free`, `outcome: ok`). What is untested is the path the ladder exists for.
+
+**Defect 1 — LADDER-EXCEEDS-TIMEOUT.** At the measured ~65s median single-call latency, the
+ladder can run longer than the 300s Cloud Run request timeout:
+
+| Ladder path | Model calls | Est. wall clock |
+|---|---|---|
+| First attempt succeeds *(all 5 measured runs)* | 1 | ~65s |
+| Repairs once, then succeeds | 2 | ~130s |
+| Free rung fails + repairs, fallback rung succeeds | 3–4 | ~195–260s |
+| Reaches the paid rung | 5+ | **>300s — killed mid-flight** |
+
+This is **the ordinary case under free-tier rate limiting, not a tail**. The ladder's entire
+reason for existing is the first rung not answering; a system whose recovery path outlives its own
+deadline recovers into a kill.
+
+**Defect 2 — ZOMBIE-PROCESSING-ROW.** A mid-flight platform kill writes nothing — `failGraph` is
+never reached — so `graphs.status` stays `"processing"` **forever**. Three consequences, and the
+third is the expensive one:
+
+1. `GET /api/graph/:id` reports `processing` indefinitely. The never-fail promise (docs/04) becomes
+   **never-resolve**, which is a worse failure than an honest error because nothing surfaces it.
+2. The client polls to its 90s timeout and shows the busy message over a graph that will never
+   resolve, no matter how long it waits.
+3. `POST /api/graph/:id/build` is idempotent on `status = "processing"` — it refuses *finished*
+   graphs. A zombie row is still `processing`, so a retry is **permitted and re-spends**. There is
+   no reaper, so this repeats indefinitely.
+
+**Both fixes are required; neither substitutes for the other.**
+
+- [ ] **A wall-clock budget (~200s) checked BETWEEN ladder rungs**, abandoning to
+      `status = "failed"` cleanly *before* the platform kills the request. This is the real fix for
+      Defect 1: the ladder must be bounded in the dimension the platform actually enforces.
+- [ ] **A timeout/heartbeat that transitions abandoned builds to `failed`**, so a row killed
+      despite the budget (process crash, instance eviction) cannot stay `processing` forever.
+- [ ] **A build-route guard that refuses or reclaims a `processing` row older than the budget**
+      rather than re-spending on it. The current idempotency check is necessary but insufficient:
+      it distinguishes finished from unfinished, not *live* from *abandoned*.
+- [ ] Verified by injection, **showing the FAILING run first**. Force a build past the budget and
+      capture the *current* behaviour before any fix exists: the request is killed, the row stays
+      `processing`, the poll never resolves, and a retry re-spends. Only then apply the fix and
+      re-run to green.
+
+      **"Assert it is fixed" is not enough here**, and this box is written this way because the
+      defect is one a green-only test cannot distinguish. Both the broken and the fixed system
+      return `processing` for most of the build — the difference is only whether that state is ever
+      left. A test written after the fix would pass against the zombie too if the injection did not
+      actually push past the budget, and nobody would know. Capturing the hang and the second spend
+      first is what proves the injection has teeth. Same standard as every other control in this
+      project (docs/06 Phase 5: the isolation, clone, cache-key and ON CONFLICT drills all recorded
+      their red run before their green one)
+
+**Coupling to the `after()` decision (Phase 7) — read this before adopting `after()`.**
+`after()` has **identical deadline exposure**. Moving the build off the response path does not
+lengthen the deadline; it only changes *who* kills it and makes the kill less visible. So
+confirming Cloud Run keeps CPU allocated after the response — already a Phase 7 item — is
+**necessary but not sufficient**, and adopting `after()` without the budget converts a visible
+timeout into a silent one.
+
+The wall-clock-budget work is **the real fix**; `after()` is **orthogonal** to it. Sequence them
+independently: the budget is required whether or not `after()` is ever adopted, and `after()`
+must not be adopted until the budget exists.
+
 ---
 
 ## 2. Security
@@ -204,10 +272,18 @@ For each row: induce the failure, confirm the user-facing result, then restore.
 | Database unreachable | Point `DATABASE_URL` at a dead host | Landing page and demo still work |
 | Neon cold start | Idle 10+ minutes, then request | Succeeds after connection retry |
 | Slow model | Stub a 60-second delay | Times out cleanly into the busy message |
+| **Slow model, graph build** | Stub 60s+ so the ladder repairs and falls through | **Currently FAILS — see §1.6.** Expected: the wall-clock budget lands the graph on `failed` before the platform kills it. Today: the request is killed and the row stays `processing` forever |
+| **Build killed mid-flight** | `kill -9` the container during a build, or force past 300s | Row transitions to `failed`; the poll resolves; a retry does **not** spend a second generation |
 
 - [ ] Every row produces a calm user-facing state
 - [ ] **No row produces a stack trace, an HTTP code, or a vendor name on screen**
 - [ ] Every row writes a ledger entry with the right `tier` and `outcome`
+- [ ] **No row leaves a graph stuck in `processing`** — a never-resolving poll is a worse failure
+      than an honest error, because nothing surfaces it (§1.6)
+
+> The plain "Slow model" row above is written for Quick Notes, where the client owns a 45s
+> deadline and the request is short-lived. **It does not transfer to the graph build**, which is
+> the longest operation in the product and has no deadline of its own. That gap is §1.6.
 
 #### Phase 4 failure-injection results (2026-07-28, Quick Notes only)
 
@@ -249,7 +325,10 @@ the slow-model timeout at the server (the *client* 45s deadline is covered in
 - [ ] 25 concurrent simulated users (2.5x target) for 10 minutes: zero 5xx responses
 - [ ] Cold start measured end to end, Cloud Run plus Neon stacked, and recorded
 - [ ] Memory: upload 20 large PDFs in sequence and watch container memory. It must return to baseline — if it climbs steadily, a parsed PDF document object is not being destroyed
-- [ ] A 100-page PDF completes or fails cleanly within the Cloud Run timeout
+- [ ] A 100-page PDF completes or fails cleanly within the Cloud Run timeout — note that document
+      length is **not** the risk here: the graph prompt is capped at 9,000 characters, so build
+      time is essentially independent of page count (docs/06 Phase 5 timing). The risk is ladder
+      depth, §1.6
 - [ ] Cloud Run `max-instances` is not reached during the load test
 
 ### 3.3 Concurrency and race conditions
@@ -309,8 +388,11 @@ Launch only when every one of these is true:
 5. A backup has been successfully restored
 6. Every row of the failure-injection table produces a calm user-facing state
 7. 25 concurrent users for 10 minutes with zero 5xx
+8. **The graph build cannot outlive its own request** (§1.6): a wall-clock budget bounds the
+   ladder, an abandoned build reaches `failed`, and a retry on a stale `processing` row does not
+   re-spend
 
-Anything else can be a known gap with a follow-up task. These seven cannot.
+Anything else can be a known gap with a follow-up task. These eight cannot.
 
 ---
 

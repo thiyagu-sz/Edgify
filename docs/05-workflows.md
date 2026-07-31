@@ -100,11 +100,11 @@ Upload document in Graph mode
   └─ POST /api/documents
                                       1–6. As W3 (validate, extract, discard file)
                                       7. contentHash = sha256(normalised text)
-                                      8. Existing graph with this hash?
+                                      8. Insert document + text
+                                      9. Existing READY graph with this hash?
                                          YES → clone concepts + edges for this
-                                               user, return graphId, DONE
+                                               user, return graphId + "ready", DONE
                                                (zero tokens — the classroom case)
-                                      9. Insert document + text
                                      10. Insert graph, status = "processing"
                                      11. Return { graphId } immediately
   │
@@ -147,7 +147,22 @@ once CPU-after-response is confirmed, and keep this route as the fallback.
 substitution: see the note under `graphs` in `03-data-model.md`. The user gets the honest message
 over a document they still own, and Quick Notes still works on it.
 
-Step 8 is the single highest-value line in the system. Ten students in one class upload one
+**The document row is inserted BEFORE the clone check.** Corrected 2026-07-30; this document
+previously ordered them the other way ("clone and return, DONE" at step 8, "insert document" at
+step 9), and that order cannot be implemented. `graphs.documentId` is `NOT NULL` with a foreign
+key (docs/03), so a cloned graph has nothing to point at until the caller's own document row
+exists. The caller needs that row regardless: it is what makes "Quick Notes still works on it"
+true after a graph failure, and what gives W5's concept detail text to ground against.
+
+The clone is also gated on the source graph being `status = "ready"`. A `processing` source has
+no concepts yet and a `failed` one never will, so cloning either would hand the user an empty
+graph marked ready — worse than simply building.
+
+Neither changes the economics: the clone still costs zero tokens, consumes no quota, and makes no
+model call. It writes one `usage_ledger` row with `tier: "cache"`, which is what keeps the saving
+visible on the cost dashboard rather than looking like a user who never uploaded.
+
+Step 9 is the single highest-value line in the system. Ten students in one class upload one
 lecture PDF; nine of them get an instant graph for zero tokens.
 
 ---
@@ -171,8 +186,26 @@ Click a node in the graph
   │                                  4. Validate, persist detailJson
   │                                  5. Return
   │          → render, no further cost on revisit
-  └─ On demo tier: render sample detail + banner
+  └─ On ladder exhaustion: render the concept's own summary
+     + "A detailed explanation couldn't be generated."
 ```
+
+**There is no demo tier for concept detail.** Corrected 2026-07-30; this document previously said
+"on demo tier: render sample detail + banner". Two reasons, and the first is the same one that
+denies graphs a demo (docs/03 §graphs):
+
+1. **It persists.** `concepts.detailJson` is a column on the user's own row (step 4), so a demo
+   detail is a written record rather than a transient panel. A banner does not undo a row.
+2. **There is nothing honest to serve.** The demo library holds details for the curated
+   machine-learning concepts only. A user who clicked a node called "Photosynthesis" would get
+   the calculus explanation under that heading — a misleading substitution whatever the banner
+   says, and picking "the nearest" curated concept is worse, because it looks like it worked.
+
+So the ladder ends at tier 6 and the panel falls back to the concept's `summary`, which *was*
+derived from the user's own document during the structure pass. That is what the prototype does
+on failure, and it is the only content available that is genuinely about their material.
+`lib/demo/index.ts` enforces this by not answering `concept_detail`, so the ladder cannot reach a
+demo detail by accident.
 
 The panel scrolls independently — `position: sticky`, `max-height: calc(100vh - 108px)`,
 `overflow-y: auto`, `overscroll-behavior: contain`. This is already solved in the prototype;

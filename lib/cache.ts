@@ -37,6 +37,18 @@ export function cacheKey(
     .digest("hex");
 }
 
+/**
+ * `sha256(normalisedText)` — the `documents.contentHash` (docs/03), and the key W4 step 8 dedupes
+ * on so a second student uploading the same lecture PDF clones an existing graph for zero tokens.
+ *
+ * Shares `normalizeText` with `cacheKey` deliberately: if the two normalisations ever diverged,
+ * the cache and the clone path would disagree about what "the same document" means, and the
+ * classroom case would half-work in a way nothing would report.
+ */
+export function contentHash(text: string): string {
+  return createHash("sha256").update(normalizeText(text)).digest("hex");
+}
+
 /** Return the cached payload and bump hit stats, or null on a miss. */
 export async function getCached(key: string): Promise<unknown | null> {
   return withDbRetry(async () => {

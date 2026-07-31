@@ -126,6 +126,8 @@ lib/
     schema.ts                 Drizzle schema
     queries/                  All database access, userId-scoped
   demo/                       Static fallback content (see 04-resilience)
+  graph/
+    layout.ts                 Layer-based layout, ported from the prototype. Pure, no I/O
   parse/                      PDF/DOCX text extraction
   quota.ts                    Per-user limits
   cache.ts                    Content-addressed dedupe

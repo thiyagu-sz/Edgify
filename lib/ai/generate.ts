@@ -1,4 +1,5 @@
 import { APICallError, NoObjectGeneratedError } from "ai";
+import type { z } from "zod";
 import { getCached, setCached, cacheKey } from "../cache";
 import { recordLedger, type LedgerOutcome } from "../db/queries/ledger";
 import { demoContentFor, type DemoInput } from "../demo";
@@ -13,8 +14,20 @@ import {
   type RunModelArgs,
   type RunStream,
 } from "./models";
-import { buildNotesPrompt, getFormat, type NotesMode } from "./prompts";
-import { quizSchema, sanitizeQuiz } from "./schemas";
+import {
+  buildConceptDetailPrompt,
+  buildGraphPrompt,
+  buildNotesPrompt,
+  getFormat,
+} from "./prompts";
+import {
+  conceptDetailSchema,
+  graphSchema,
+  quizSchema,
+  sanitizeConceptDetail,
+  sanitizeGraph,
+  sanitizeQuiz,
+} from "./schemas";
 
 /**
  * The degradation ladder (docs/04-resilience.md §1) — the SINGLE chokepoint for all model spend
@@ -50,21 +63,117 @@ class EmptyStreamError extends Error {
 
 export type GenerateNotice = "demo" | "quota" | null;
 
-export type GenerateInput = {
+/** Quick Notes (W2/W3). `format` is the prompt and cache discriminator. */
+export type QuickNotesInput = {
   userId: string;
-  /** Phase 3 handles quick_notes; graph_structure / concept_detail arrive in Phase 5. */
   operation: "quick_notes";
-  /** Notes format id — the cache and prompt discriminator. */
   format: string;
   /** Source material. Normalised before hashing so identical documents dedupe. */
   text: string;
 };
 
+/** Graph structure extraction (W4 step 13). The whole document is the input. */
+export type GraphStructureInput = {
+  userId: string;
+  operation: "graph_structure";
+  text: string;
+};
+
+/** Lazy per-concept explanation (W5). */
+export type ConceptDetailInput = {
+  userId: string;
+  operation: "concept_detail";
+  /** Stable id within the graph — REQUIRED in the cache key; see `cacheDiscriminator`. */
+  conceptSlug: string;
+  conceptName: string;
+  /** The document text, as grounding. Identical for every concept in one graph. */
+  text: string;
+};
+
+export type GenerateInput =
+  | QuickNotesInput
+  | GraphStructureInput
+  | ConceptDetailInput;
+
 export type GenerateResult = {
   data: unknown;
   tier: "cache" | "free" | "paid" | "demo";
   notice: GenerateNotice;
+  /** Which model actually answered — null for cache and demo tiers. `graphs.modelId` records it. */
+  modelId: string | null;
 };
+
+/**
+ * The second component of the cache key, after the normalised text (see `lib/cache.ts`).
+ *
+ * `concept_detail` MUST carry the concept slug. Every concept in one graph is generated from the
+ * SAME document text — that is the whole point of grounding — so without the slug all 6-9
+ * concepts hash to one key. The first concept clicked would populate the entry and every other
+ * concept would then "hit" it and render that first concept's definition under its own name. The
+ * failure is silent, looks like a working cache, and gets worse the better the cache performs.
+ *
+ * `graph_structure` needs no extra component: one graph per document, and the text is the key.
+ *
+ * Quick Notes keeps using the bare format id, so every cache entry written before Phase 5 stays
+ * valid — no format is named `graph_structure`, and none contains a colon.
+ */
+export function cacheDiscriminator(input: GenerateInput): string {
+  switch (input.operation) {
+    case "quick_notes":
+      return input.format;
+    case "graph_structure":
+      return "graph_structure";
+    case "concept_detail":
+      return `concept_detail:${input.conceptSlug}`;
+  }
+}
+
+/** What the ladder needs to run one operation: a prompt, an optional schema, and a validator. */
+type GenerationPlan = {
+  system: string;
+  prompt: string;
+  /** Present → structured generation (`generateObject`); absent → free text (docs/04 §3). */
+  schema?: z.ZodType;
+  /** Returns the sanitised payload, or null for a tier failure. Never throws. */
+  validate: (data: unknown) => unknown | null;
+};
+
+/**
+ * Build the plan for an operation. Returns null only when the request itself is unusable (an
+ * unknown Quick Notes format), which the caller maps to the demo/busy tail rather than an error.
+ */
+function planGeneration(input: GenerateInput): GenerationPlan | null {
+  if (input.operation === "quick_notes") {
+    if (!getFormat(input.format)) return null;
+    const { system, prompt, mode } = buildNotesPrompt(input.format, input.text);
+    return {
+      system,
+      prompt,
+      schema: mode === "quiz" ? quizSchema : undefined,
+      validate: (data) => (mode === "quiz" ? sanitizeQuiz(data) : nonEmptyText(data)),
+    };
+  }
+
+  if (input.operation === "graph_structure") {
+    const { system, prompt } = buildGraphPrompt(input.text);
+    // sanitizeGraph drops dangling edges, breaks cycles, and rejects fewer than three concepts
+    // as a FAILED extraction rather than a small graph (docs/04 §3).
+    return { system, prompt, schema: graphSchema, validate: sanitizeGraph };
+  }
+
+  const { system, prompt } = buildConceptDetailPrompt(input.conceptName, input.text);
+  return {
+    system,
+    prompt,
+    schema: conceptDetailSchema,
+    validate: sanitizeConceptDetail,
+  };
+}
+
+/** Markdown validation: trimmed non-empty text. Empty is a failure, not an empty success. */
+function nonEmptyText(data: unknown): string | null {
+  return typeof data === "string" && data.trim().length > 0 ? data.trim() : null;
+}
 
 export type GenerateDeps = {
   runModel?: RunModel;
@@ -102,7 +211,7 @@ export async function generate(
   const started = now();
   const elapsed = () => now() - started;
 
-  const key = cacheKey(input.text, input.format, env.PROMPT_VERSION);
+  const key = cacheKey(input.text, cacheDiscriminator(input), env.PROMPT_VERSION);
 
   // ── Tier 0: cache hit — free, no quota consumed, no model call ──────────────
   const cached = await getCached(key);
@@ -115,7 +224,7 @@ export async function generate(
       tokensOut: 0,
       latencyMs: elapsed(),
     });
-    return { data: cached, tier: "cache", notice: null };
+    return { data: cached, tier: "cache", notice: null, modelId: null };
   }
 
   // ── Cache miss: consume quota. Over limit → demo with the quota banner ──────
@@ -124,17 +233,16 @@ export async function generate(
     return serveDemo(input, "quota", demoFor, elapsed);
   }
 
-  // Build the prompt. An unknown format can't be generated → demo/busy tail.
-  let promptInfo: { system: string; prompt: string; mode: NotesMode } | null = null;
-  if (getFormat(input.format)) {
-    promptInfo = buildNotesPrompt(input.format, input.text);
-  }
-  if (!promptInfo) {
-    log.error("generate: unknown format", undefined, { format: input.format });
+  // Build the prompt. An unusable request (unknown format) → demo/busy tail.
+  const plan = planGeneration(input);
+  if (!plan) {
+    log.error("generate: unusable request", undefined, {
+      operation: input.operation,
+      discriminator: cacheDiscriminator(input),
+    });
     return serveDemo(input, "demo", demoFor, elapsed);
   }
-  const { system, prompt, mode } = promptInfo;
-  const schema = mode === "quiz" ? quizSchema : undefined;
+  const { system, prompt, schema } = plan;
 
   // ── Tiers 1–4: walk the model ladder ────────────────────────────────────────
   const ladder = modelLadder();
@@ -144,13 +252,11 @@ export async function generate(
     let retried = false;
     for (let attempt = 0; attempt < step.maxAttempts; attempt++) {
       try {
-        const result = await attemptModel(runModel, {
-          modelId: step.modelId,
-          system,
-          prompt,
-          schema,
-          mode,
-        });
+        const result = await attemptModel(
+          runModel,
+          { modelId: step.modelId, system, prompt, schema },
+          plan.validate,
+        );
         const outcome: LedgerOutcome = fellThrough
           ? "fallback"
           : retried
@@ -171,7 +277,12 @@ export async function generate(
             latencyMs: elapsed(),
           }),
         ]);
-        return { data: result.data, tier: step.tier, notice: null };
+        return {
+          data: result.data,
+          tier: step.tier,
+          notice: null,
+          modelId: step.modelId,
+        };
       } catch (err) {
         const kind = classify(err);
         if (kind === "retry") {
@@ -206,7 +317,7 @@ export async function generate(
  * invisibly; once tokens flow we are committed to that tier.
  */
 export async function generateNotesStream(
-  input: GenerateInput,
+  input: QuickNotesInput,
   deps: GenerateDeps = {},
   opts: { signal?: AbortSignal } = {},
 ): Promise<NotesStreamResult> {
@@ -227,7 +338,7 @@ export async function generateNotesStream(
   const started = now();
   const elapsed = () => now() - started;
 
-  const key = cacheKey(input.text, input.format, env.PROMPT_VERSION);
+  const key = cacheKey(input.text, cacheDiscriminator(input), env.PROMPT_VERSION);
 
   /**
    * ── Tier 0: cache hit ─────────────────────────────────────────────────────
@@ -392,15 +503,18 @@ async function* commitStream(args: {
   ]);
 }
 
-/** One model attempt: call, validate, and on malformed content do exactly ONE repair. */
+/**
+ * One model attempt: call, validate, and on malformed content do exactly ONE repair (docs/04 §3).
+ * `validate` is the operation's sanitiser — it returns null for unusable output and never throws.
+ */
 async function attemptModel(
   runModel: RunModel,
-  args: RunModelArgs & { mode: NotesMode },
+  call: RunModelArgs,
+  validate: (data: unknown) => unknown | null,
 ): Promise<{ data: unknown; tokensIn: number; tokensOut: number }> {
-  const { mode, ...call } = args;
   try {
     const res = await runModel(call);
-    const valid = validateOutput(res.data, mode);
+    const valid = validate(res.data);
     if (valid !== null) {
       return { data: valid, tokensIn: res.tokensIn, tokensOut: res.tokensOut };
     }
@@ -411,7 +525,7 @@ async function attemptModel(
   const repairPrompt = `${call.prompt}\n\nYour previous response was invalid. Respond again with ONLY valid output in the required format, and nothing else.`;
   try {
     const res = await runModel({ ...call, prompt: repairPrompt });
-    const valid = validateOutput(res.data, mode);
+    const valid = validate(res.data);
     if (valid !== null) {
       return { data: valid, tokensIn: res.tokensIn, tokensOut: res.tokensOut };
     }
@@ -421,20 +535,24 @@ async function attemptModel(
   throw new MalformedOutputError();
 }
 
-/** Quiz → sanitised Quiz (drops out-of-range answers); markdown → trimmed non-empty string. */
-function validateOutput(data: unknown, mode: NotesMode): unknown | null {
-  if (mode === "quiz") return sanitizeQuiz(data);
-  if (typeof data === "string" && data.trim().length > 0) return data.trim();
-  return null; // empty/whitespace is a failure, not a successful empty result
-}
-
+/**
+ * Tier 5 if demo content exists for this request, otherwise tier 6 (busy).
+ *
+ * `graph_structure` and `concept_detail` deliberately have NO demo content, so for them this is
+ * always tier 6 — both persist rows into the user's own workspace, and a curated sample written
+ * there would misrepresent a document they uploaded (docs/03 §graphs, lib/demo/index.ts). The
+ * caller maps the resulting `ServiceBusyError` to `status = "failed"` and the W4 message.
+ */
 async function serveDemo(
   input: GenerateInput,
   notice: GenerateNotice,
   demoFor: (input: DemoInput) => unknown | null,
   elapsed: () => number,
 ): Promise<GenerateResult> {
-  const demo = demoFor({ operation: input.operation, format: input.format });
+  const demo = demoFor({
+    operation: input.operation,
+    format: cacheDiscriminator(input),
+  });
   if (demo !== null) {
     await recordLedger(input.userId, {
       operation: input.operation,
@@ -442,7 +560,7 @@ async function serveDemo(
       outcome: "demo",
       latencyMs: elapsed(),
     });
-    return { data: demo, tier: "demo", notice };
+    return { data: demo, tier: "demo", notice, modelId: null };
   }
   await recordLedger(input.userId, {
     operation: input.operation,

@@ -1,12 +1,6 @@
 import { auth } from "@/lib/auth";
 import { log } from "@/lib/log";
-import {
-  MAX_BYTES,
-  checkContentLength,
-  extractDocument,
-  isParseFailure,
-  readCapped,
-} from "@/lib/parse";
+import { extractDocument, isParseFailure, readUploadedFile } from "@/lib/parse";
 import { withRateLimit } from "@/lib/rate-limit";
 
 /**
@@ -32,13 +26,6 @@ export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-/**
- * Slack over the 10 MB file cap for the multipart envelope (boundaries, headers, field names).
- * Without it a legitimate 10 MB file is rejected for the few hundred bytes of wrapper around it.
- * The file's own size is checked exactly, below.
- */
-const ENVELOPE_SLACK = 64 * 1024;
-
 function json(body: Record<string, unknown>, status = 200): Response {
   return Response.json(body, { status, headers: NO_STORE });
 }
@@ -49,44 +36,15 @@ async function handler(request: Request): Promise<Response> {
     return json({ message: "Please sign in again to continue." }, 401);
   }
 
-  // Size gate #1: the declared length, answered before the body is touched (W3 step 2).
-  const declared = checkContentLength(request.headers.get("content-length"));
-  if (declared) return json({ message: declared.message });
-
-  if (!request.body) {
-    return json({ message: "Edgify reads PDF, DOCX, TXT and Markdown files." });
-  }
-
-  // Size gate #2: the running total, because Content-Length is client-supplied and may lie.
-  const raw = await readCapped(request.body, MAX_BYTES + ENVELOPE_SLACK);
-  if (isParseFailure(raw)) return json({ message: raw.message });
-
-  let file: File | null = null;
-  try {
-    // Re-wrap the capped bytes so the platform parses the multipart envelope. Reading
-    // `request.formData()` directly would buffer the whole body with no cap at all.
-    const form = await new Response(raw, {
-      headers: { "content-type": request.headers.get("content-type") ?? "" },
-    }).formData();
-    const field = form.get("file");
-    if (field instanceof File) file = field;
-  } catch (error) {
-    log.error("documents/extract: could not read the upload", error, {
-      userId: session.user.id,
-    });
-    return json({
-      message: "That file couldn't be read. It may be damaged — try re-saving or exporting it again.",
-    });
-  }
-
-  if (!file) {
-    return json({ message: "Edgify reads PDF, DOCX, TXT and Markdown files." });
-  }
-  // The file's own size, now known exactly rather than inferred from the envelope.
-  if (file.size > MAX_BYTES) {
-    return json({
-      message: "That file is over the 10 MB limit. Try a smaller file, or paste the text directly.",
-    });
+  // Both size gates and the multipart parse (W3 steps 2–3), shared with POST /api/documents.
+  const file = await readUploadedFile(request);
+  if (isParseFailure(file)) {
+    if (file.kind === "corrupt") {
+      log.error("documents/extract: could not read the upload", file.cause, {
+        userId: session.user.id,
+      });
+    }
+    return json({ message: file.message });
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());

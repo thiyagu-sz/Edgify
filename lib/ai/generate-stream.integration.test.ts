@@ -5,7 +5,7 @@ import { readLedger } from "@/lib/db/queries/ledger";
 import { DEMO_NOTES } from "@/lib/demo/notes";
 import { createTestUser } from "@/test/factories";
 import { generateNotesStream, type GenerateDeps } from "./generate";
-import type { RunModel, RunStream } from "./models";
+import { modelLadder, type RunModel, type RunStream } from "./models";
 
 /**
  * The STREAMING Quick Notes ladder (Phase 4). Markdown streams token-by-token; the same
@@ -122,7 +122,13 @@ describe("generateNotesStream — streaming degradation ladder", () => {
     if (r.kind !== "stream") return;
     expect(r.tier).toBe("paid");
     expect(await drain(r.textStream)).toBe("Paid notes.");
-    expect(calls.filter(isFree)).toHaveLength(3); // 3 attempts on free
+    // The ladder has more than one free rung — the primary free model (3 attempts) plus every id
+    // in OPENROUTER_FREE_FALLBACKS (2 each). Derived from `modelLadder()` rather than hardcoded,
+    // so adding or retiring a fallback updates the expectation instead of breaking this test.
+    const expectedFreeCalls = modelLadder()
+      .filter((s) => s.tier === "free")
+      .reduce((n, s) => n + s.maxAttempts, 0);
+    expect(calls.filter(isFree)).toHaveLength(expectedFreeCalls);
     expect(calls.filter((m) => !isFree(m))).toHaveLength(1);
 
     const ledger = await readLedger(userId);

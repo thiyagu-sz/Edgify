@@ -102,3 +102,4 @@ export {
   type SourceType,
 } from "./limits";
 export { PARSE_MESSAGES, type ParseFailureKind } from "./failures";
+export { readUploadedFile } from "./upload";

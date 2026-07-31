@@ -124,7 +124,16 @@ function tooManyRequests(result: RateLimitResult): Response {
   );
 }
 
-type RouteHandler = (req: Request) => Promise<Response> | Response;
+/**
+ * A Next route handler. The second argument is the route context — for a dynamic segment like
+ * `/api/graph/[id]` that is `{ params: Promise<{ id: string }> }`, and the wrapper must pass it
+ * through untouched or the id never reaches the handler. Static routes simply ignore it (a
+ * one-parameter function is assignable here).
+ */
+type RouteHandler<Ctx = unknown> = (
+  req: Request,
+  ctx: Ctx,
+) => Promise<Response> | Response;
 
 /**
  * Wrap a route handler with per-IP fixed-window rate limiting. `routeName` namespaces the bucket
@@ -141,21 +150,26 @@ type RouteHandler = (req: Request) => Promise<Response> | Response;
  * hiccup into a total product outage. Nothing is exposed by failing open: every route behind this
  * needs the database for its own session and quota reads, so it cannot do expensive work either.
  */
-export function withRateLimit(
+export function withRateLimit<Ctx = unknown>(
   routeName: string,
-  handler: RouteHandler,
+  handler: RouteHandler<Ctx>,
   opts: Omit<CheckOpts, "now"> = {},
-): RouteHandler {
-  return async (req: Request) => {
+): (req: Request, ...rest: [ctx?: Ctx]) => Promise<Response> {
+  return async (req: Request, ...rest: [ctx?: Ctx]) => {
     const key = `${routeName}:${clientIp(req)}`;
+    // The context is optional at THIS boundary so a static route's handler and its tests can call
+    // `POST(request)` with one argument, while a dynamic route still gets a fully typed `ctx`
+    // inside its own handler (the generic is pinned at the call site, e.g.
+    // `withRateLimit<RouteContext>`). Next always supplies the second argument for `[id]` routes.
+    const ctx = rest[0] as Ctx;
     let result: RateLimitResult;
     try {
       result = await checkRateLimit(key, opts);
     } catch (error) {
       log.error("rate limit: check failed, allowing request", error, { key });
-      return handler(req);
+      return handler(req, ctx);
     }
     if (!result.allowed) return tooManyRequests(result);
-    return handler(req);
+    return handler(req, ctx);
   };
 }

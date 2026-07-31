@@ -50,18 +50,45 @@ export type RunModelResult = { data: unknown; tokensIn: number; tokensOut: numbe
 /** The single seam the ladder calls. Tests inject a fake to force each tier's behaviour. */
 export type RunModel = (args: RunModelArgs) => Promise<RunModelResult>;
 
-/** Real OpenRouter-backed runner. Never called from tests — they inject a fake. */
+/**
+ * Real OpenRouter-backed runner. Never called from tests — they inject a fake.
+ *
+ * `maxRetries: 0`, for the same reason `realRunStream` sets it: retry discipline belongs to the
+ * ladder, not the SDK (docs/04 §1, `.claude/rules/ai.md` "Maximum 2 retries per model tier").
+ *
+ * This was MISSING here until 2026-07-30 while the streaming seam had it from the start, so the
+ * buffered path silently ran the AI SDK's default of 2 internal retries underneath every ladder
+ * attempt. The ladder makes up to 7 attempts (free 3 + fallback 2 + paid 2), each of which can
+ * repair once — up to 14 calls — and every one of those was up to 3 HTTP requests, so a single
+ * graph build could reach ~42 provider requests instead of 14. Three consequences, all bad:
+ * failed requests count against the free daily quota (docs/04 §1), the retries were unjittered by
+ * our own backoff, and worst-case build latency tripled against a hard Cloud Run request timeout.
+ *
+ * It matters most for Phase 5: `graph_structure` and `concept_detail` both use this seam, and the
+ * graph build is the longest operation in the product (docs/06 Phase 5 results).
+ */
 export const realRunModel: RunModel = async ({ modelId, system, prompt, schema }) => {
   const model = openrouter().chat(modelId);
   if (schema) {
-    const { object, usage } = await generateObject({ model, system, prompt, schema });
+    const { object, usage } = await generateObject({
+      model,
+      system,
+      prompt,
+      schema,
+      maxRetries: 0,
+    });
     return {
       data: object,
       tokensIn: usage.inputTokens ?? 0,
       tokensOut: usage.outputTokens ?? 0,
     };
   }
-  const { text, usage } = await generateText({ model, system, prompt });
+  const { text, usage } = await generateText({
+    model,
+    system,
+    prompt,
+    maxRetries: 0,
+  });
   return {
     data: text,
     tokensIn: usage.inputTokens ?? 0,

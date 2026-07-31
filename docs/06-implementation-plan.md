@@ -267,10 +267,24 @@ someone should open one before launch.
 - Lazy concept detail
 - Mastery tracking
 - **Dedupe on `contentHash`** — clone an existing graph instead of regenerating
+- **BLOCKER — the build can outlive its own request.** Found 2026-07-30 by the first live
+  end-to-end run; two coupled defects, launch-blocking, gated in docs/09 §1.6 and go/no-go item 8.
+  **`LADDER-EXCEEDS-TIMEOUT`**: at ~65s median single-call latency, a build that repairs once and
+  falls through to the fallback rung reaches ~195–260s and one reaching the paid rung exceeds the
+  300s Cloud Run request timeout — the *ordinary* case under free-tier rate limiting, not a tail.
+  **`ZOMBIE-PROCESSING-ROW`**: a mid-flight kill writes nothing, so the row stays `processing`
+  forever — the poll never resolves (never-fail becomes never-resolve), and the build route's
+  idempotency check refuses only *finished* graphs, so a retry on the zombie is permitted and
+  re-spends, with no reaper. Fixes: a wall-clock budget (~200s) checked **between rungs**, a
+  heartbeat/timeout that transitions abandoned builds to `failed`, and a build-route guard that
+  refuses or reclaims a stale `processing` row. **All three required; none substitutes for
+  another.** Not built in the Phase 5 slices — flagged, measured and gated
 
 **Acceptance criteria**
-- [ ] A 30-page PDF produces a graph within ~90 seconds
-- [ ] The same PDF uploaded by a second user returns instantly, zero tokens
+- [~] A 30-page PDF produces a graph within ~90 seconds — **median 73.7s, but max 93.0s over n=5,
+      and every run was a best case.** Measured, not gated. See "End-to-end timing" below
+- [x] The same PDF uploaded by a second user returns instantly, zero tokens — 8.0s vs 54–93s,
+      ledger `tier: "cache"`, quota unchanged; verified live, not only in the test harness
 - [ ] A scanned PDF produces the honest scanned-document message
 - [ ] An 11 MB file is rejected before the body is read
 - [ ] An encrypted PDF fails with a clear message, not a crash
@@ -278,6 +292,150 @@ someone should open one before launch.
 - [ ] The panel scrolls independently; the page behind does not move
 - [ ] Marking mastery updates readiness across the graph
 - [ ] Graph export produces a complete study guide
+
+#### Phase 5 slice 2 results (2026-07-30) — query layer, AI widening, three routes
+
+The UI (graph, concept panel, export) and the `/api/concepts` and `/api/mastery` routes are the
+next slice; the query layer and `generate.ts` support for both landed here.
+
+**The join-through isolation case.** `concepts` and `edges` carry no `userId` — the owner lives on
+`graphs` — so their isolation is one `EXISTS` subquery that looks optional to a refactorer. Proven
+by mutation: deleting the predicate from `listConcepts` turned **three** tests red, each showing
+user B reading A's rows (`["a","b","c"]`), including the bidirectional clone case; restoring it
+returned 24/24. That drill is now also **permanent infrastructure** rather than a one-off — a
+final describe block runs the unscoped form of each query inline and asserts it *does* leak, so
+the "B sees nothing" assertions beside it can never pass vacuously. If those controls ever go
+green-by-accident, the seeding has changed and the whole suite has stopped proving anything.
+
+**`cloneGraphByContentHash` is the one cross-user read in the codebase**, and it is listed as such
+(`CONTENT_ADDRESSED_ALLOWLIST`) rather than hidden in the writer allowlist. Sound for the
+`generation_cache` reason (docs/03): reachable only by supplying a document that hashes
+identically, nothing enumerable, every row written under the caller. Tested bidirectionally —
+clone invisible to source, source invisible to caller, fresh concept ids so mastery cannot leak.
+
+**Proof 7 — the classroom case.** A second user uploading an identical file gets `status: "ready"`
+on upload: zero model calls, own rows under own `userId`, quota unchanged, one ledger row with
+`tier: "cache"`. Negative control: the same harness with different text takes the build path and
+*does* charge. Drilled — making the clone path consume quota produced exactly the assertion that
+matters: *"the clone consumed a generation from the daily allowance: expected 29 to be 30"*.
+
+**Proof 8 — graph failure.** Sub-3-concept output walks the ladder in **exactly 6 model calls**
+(3 rungs × 1 attempt + 1 repair; a malformed result repairs once then moves on, it is not
+retried within a rung), reaches tier 6 because no demo graph exists, and lands on
+`status = "failed"` with the W4 message. The `documents` row and its `extractedText` survive
+intact — which is what makes "Quick Notes still works on it" true rather than a hope. A re-fire
+after failure is a no-op and spends nothing.
+
+**Concept-detail cache key.** Removing the slug collapsed **all nine concepts of a realistic graph
+onto one key** (`expected 1 to be 9`). Without it the first concept clicked populates the entry
+and every other concept renders that first concept's definition under its own name — silent, and
+worse the better the cache performs.
+
+**`generation_cache` under real concurrency.** The pre-existing sequential test could not prove
+the `ON CONFLICT` rule: by the time the second insert runs the first has committed, so Postgres
+never arbitrates two live inserts. Replaced with a two-connection barrier (both `BEGIN`, both
+`INSERT`, then `COMMIT`) that produces the genuine interleaving, plus a control asserting the
+same barrier raises `23505` without the clause. Drilled — removing `.onConflictDoNothing()` from
+`setCached` made **9 of 10 concurrent writers error** on the duplicate key: the classroom
+scenario failing exactly as `.claude/rules/database.md` predicts.
+
+**Decisions recorded rather than papered over:**
+
+- **No `building` status.** docs/03's four statuses are exhaustive and `demo` is reserved. The
+  conditional `UPDATE ... WHERE status = 'processing'` inside `finishGraph` runs FIRST in the
+  transaction and takes the row lock, so **corruption is fully closed**: two simultaneous builds
+  can never write duplicate concepts, duplicate edges, or a `ready` graph with a partial node set.
+  What remains is a bounded, accepted **spend** window — *at most one wasted model call*, only when
+  two builds for the same graph are genuinely simultaneous (both past the route's pre-check before
+  either commits), bounded by the daily quota, and the client fires the build once.
+- **No demo tier for `concept_detail`**, matching the graph decision. docs/05 W5 corrected.
+- **W4 step order corrected**: the document row must be inserted before the clone, because
+  `graphs.documentId` is `NOT NULL`. docs/05 corrected.
+- **`GET /api/graph/:id` is limited to 600/min per IP.** One client polling at 1.5s costs
+  ~40 req/min, so 600 covers ~15 concurrent builders behind one address — and a campus NAT puts a
+  whole class behind one address. A class of 30 would need ~1200/min. **The next slice's polling
+  backoff (1.5s for ~15s, then 3s) is what makes 600 hold; it is part of this limit, not polish.**
+  Shipping the graph UI with a flat 1.5s poll would make this route the feature's own bottleneck.
+- **A ported prototype quirk, pinned not fixed**: `startX = max(8, …)` prefers an 8px left margin
+  over true centring, so a shrunk row that fills the viewport overhangs the 760 viewBox by up to
+  8px. Rule 6 says the prototype is the specification; the test records the behaviour and why.
+
+#### End-to-end timing, live (2026-07-30)
+
+First full exercise of the ingestion path against the real stack: production build, real Neon,
+real OpenRouter, driven by curl with a seeded session. Five distinct genuine 30-page text PDFs
+(~97–104 KB, ~69k extracted chars), each rotated so the first 9,000 characters differ — otherwise
+runs 2+ would hit the contentHash clone and the generation cache and measure nothing.
+
+| Run | Upload | Build | **Total** | Model (ledger) | Concepts/edges |
+|---|---|---|---|---|---|
+| 0 | 6.0s | 48.0s | 54.0s | 42.0s | 6 / 6 |
+| 1 | 4.0s | 88.9s | **93.0s** | 83.3s | 8 / 9 |
+| 2 | 3.4s | 70.2s | 73.7s | 65.3s | 7 / 6 |
+| 3 | 3.5s | 20.8s | **24.4s** | 17.7s | 6 / 5 |
+| 4 | 2.9s | 79.7s | 82.8s | 74.0s | 6 / 5 |
+
+**Median total 73.7s** (upload 3.5s, build 70.2s). Min 24.4s, max 93.0s. A measurement, deliberately
+not a CI gate — same treatment as the Phase 4 first-token figure.
+
+**Three things the number hides, and they matter more than the number.**
+
+1. **Every one of these is a BEST CASE.** All five ledger rows read `tier: "free"`, `outcome: "ok"`
+   — first rung, first attempt, no retry, no repair, no fallback. The spread (24.4s → 93.0s, 3.8x)
+   is pure free-model variance on a *single* call.
+2. **"30-page" is not what is being measured.** `GRAPH_TEXT_LIMIT` caps the prompt at 9,000
+   characters, so of ~69,600 extracted characters the model saw ~13% — roughly the first 4 pages
+   (`tokens_in` ≈ 2,600 confirms it). Build time is therefore essentially **independent of document
+   length**; a 100-page PDF would cost the same model time and only slightly more parsing. The
+   criterion passes, but a reader could reasonably assume the graph covers all 30 pages. **It does
+   not.** Whether that is the right product behaviour is a real question, and a separate one from
+   this timing.
+3. **Parsing is not the bottleneck.** Upload+extract+hash+insert for 30 pages is ~3.5s, about 5% of
+   the total. The model call is ~90–95%.
+
+**Does it fit the 300s Cloud Run request timeout? Not with comfortable margin — this is a finding,
+not a number to record.**
+
+On the observed best case, yes: max 93.0s against 300s is 3.2x headroom. But the ladder's whole
+purpose is the case where the first rung *doesn't* answer, and none of these five runs exercised
+it. At the observed median single-call latency of ~65s:
+
+| Ladder path | Model calls | Est. wall clock |
+|---|---|---|
+| First attempt succeeds (all 5 runs above) | 1 | ~65s |
+| Free rung repairs once, then succeeds | 2 | ~130s |
+| Free rung fails + repairs, fallback rung succeeds | 3–4 | ~195–260s |
+| Reaches the paid rung | 5+ | **>300s — killed** |
+
+So a build that merely repairs once and falls through to the fallback rung lands at ~260s, inside
+300s with almost no margin; anything reaching the paid rung exceeds it. That is not an exotic
+tail — free-tier rate limiting under load is the ordinary case the ladder exists for.
+
+**And being killed by the platform is worse than failing.** Nothing writes `status = "failed"` on
+a mid-flight kill, so the row stays `processing` forever: `GET /api/graph/:id` reports `processing`
+indefinitely, the client polls to its 90s timeout and shows the busy message over a graph that
+never resolves, and because the build route's idempotency pre-check only refuses non-`processing`
+graphs, a retry is *allowed* and spends again. There is no reaper.
+
+**These two defects are recorded as blocker-class, not as tuning notes**: `LADDER-EXCEEDS-TIMEOUT`
+and `ZOMBIE-PROCESSING-ROW`, in the Phase 5 scope above, the Phase 7 scope below, docs/09 §1.6, the
+docs/09 §3.1 failure-injection table, and go/no-go item 8. They are **flagged rather than built** —
+out of this slice's scope — and all three fixes (wall-clock budget between rungs, heartbeat to
+`failed`, stale-`processing` guard) are required; none substitutes for another.
+
+The `after()` coupling is the part most likely to be got wrong later, so it is stated in both
+places: **`after()` has identical deadline exposure and does not address this.** It moves the
+build off the response path without lengthening the deadline — it only changes who kills it, and
+makes the kill less visible. Confirming CPU-after-response is necessary but **not sufficient**;
+the budget is the real fix and is required regardless of `after()`.
+
+**A real bug found by this run** — `realRunModel` did not pass `maxRetries: 0` while
+`realRunStream` always had. The buffered seam therefore ran the AI SDK's default **2 internal
+retries beneath every ladder attempt**, so ~14 ladder calls could become ~42 provider requests:
+free-tier quota burned on invisible retries, our jittered backoff bypassed, and worst-case latency
+tripled against exactly the timeout analysed above. `graph_structure` and `concept_detail` both use
+this seam, so Phase 5 was the most exposed. Fixed, and guarded by `lib/ai/retry-discipline.test.ts`
+so neither seam can regress.
 
 ---
 
@@ -311,13 +469,30 @@ someone should open one before launch.
 - Sentry release tracking
 - Internal usage dashboard from `usage_ledger`
 - Load test at 25 concurrent (2.5x target)
+- **BLOCKER — bound the graph build's wall clock (`LADDER-EXCEEDS-TIMEOUT`,
+  `ZOMBIE-PROCESSING-ROW`).** Carried from Phase 5, gated in docs/09 §1.6 and go/no-go item 8.
+  A wall-clock budget (~200s) checked **between ladder rungs**, a heartbeat that transitions
+  abandoned builds to `failed`, and a build-route guard that refuses or reclaims a stale
+  `processing` row instead of re-spending on it. **This is the real fix, and it is required
+  regardless of `after()`.**
 - **Confirm Cloud Run keeps CPU allocated after the response is sent.** Phase 5 deliberately made
   the graph build a separate client-fired request (`POST /api/graph/:id/build`) rather than using
   Next's `after()`, because `after()` silently depends on this setting and a wrong guess ends every
   upload in `failed` with no application-level symptom. Once confirmed, folding the build back into
   `POST /api/documents` via `after()` removes a round trip and a client responsibility — an
   optimisation to adopt *after* verification, keeping the build route as the fallback. Do not
-  reverse the order (docs/05 W4)
+  reverse the order (docs/05 W4).
+
+  **`after()` does NOT address the timeout blocker above, and must not be adopted before it is
+  fixed.** `after()` has **identical deadline exposure**: moving the build off the response path
+  does not lengthen the deadline, it only changes *who* kills it — and it makes the kill *less*
+  visible, since there is no longer a hanging request to notice. So confirming CPU-after-response
+  is **necessary but not sufficient**; adopting `after()` without the budget converts a visible
+  timeout into a silent one, and `ZOMBIE-PROCESSING-ROW` gets strictly worse.
+
+  The two are **orthogonal**: sequence them independently. The budget is required whether or not
+  `after()` is ever adopted; `after()` is a round-trip optimisation that may only be taken once
+  the budget exists *and* CPU-after-response is confirmed
 
 **Acceptance criteria**
 - [ ] Deployed and reachable over HTTPS

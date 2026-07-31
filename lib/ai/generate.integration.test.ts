@@ -6,7 +6,7 @@ import { DEMO_NOTES } from "@/lib/demo/notes";
 import { getRemaining } from "@/lib/quota";
 import { createTestUser } from "@/test/factories";
 import { generate, ServiceBusyError, type GenerateDeps } from "./generate";
-import type { RunModel, RunModelResult } from "./models";
+import { modelLadder, type RunModel, type RunModelResult } from "./models";
 
 /**
  * The degradation ladder, proven tier by tier (docs/06 Phase 3 acceptance). Every test injects a
@@ -17,6 +17,24 @@ import type { RunModel, RunModelResult } from "./models";
 const isFree = (modelId: string) => modelId.includes(":free");
 const noSleep = async () => {};
 const uniqueText = () => `neural networks ${randomUUID()}`;
+
+/**
+ * The ladder has MORE THAN ONE free rung: the primary free model (3 attempts) plus every id in
+ * `OPENROUTER_FREE_FALLBACKS` (2 attempts each), then the paid model (docs/02 — a free-tier
+ * retirement must be a config change, not an outage).
+ *
+ * These counts are derived from `modelLadder()` rather than hardcoded. They used to be literals
+ * written when there was a single free rung, and they silently went stale the moment
+ * `OPENROUTER_FREE_FALLBACKS` gained a default — the tests then asserted 3 free calls against a
+ * ladder that legitimately makes 5. Deriving them means adding or removing a fallback updates the
+ * expectation instead of breaking the suite.
+ */
+const freeSteps = () => modelLadder().filter((s) => s.tier === "free");
+/** Total free attempts when every free rung fails with a RETRYABLE error (all attempts used). */
+const freeAttemptsWhenRetrying = () =>
+  freeSteps().reduce((n, s) => n + s.maxAttempts, 0);
+/** Total free calls when output is MALFORMED: one attempt + one repair per rung, no retries. */
+const freeCallsWhenMalformed = () => freeSteps().length * 2;
 
 function apiError(statusCode: number): APICallError {
   return new APICallError({
@@ -87,7 +105,8 @@ describe("generate — degradation ladder", () => {
     );
     expect(r.tier).toBe("paid");
     expect(r.notice).toBeNull();
-    expect(calls.filter(isFree)).toHaveLength(3); // free attempted 3x
+    // Every free rung exhausts its attempts on a retryable 429, then the paid rung answers.
+    expect(calls.filter(isFree)).toHaveLength(freeAttemptsWhenRetrying());
     expect(calls.filter((m) => !isFree(m))).toHaveLength(1); // paid once
     const ledger = await readLedger(userId);
     expect(ledger[0].tier).toBe("paid");
@@ -142,7 +161,9 @@ describe("generate — degradation ladder", () => {
       { runModel, sleep: noSleep },
     );
     expect(r.tier).toBe("paid");
-    expect(calls.filter(isFree)).toHaveLength(2); // original + exactly one repair
+    // Malformed output is NOT retried within a rung: one attempt + exactly one repair, then
+    // straight to the next rung (docs/04 §3).
+    expect(calls.filter(isFree)).toHaveLength(freeCallsWhenMalformed());
     expect(calls.filter((m) => !isFree(m))).toHaveLength(1);
   });
 
@@ -166,7 +187,17 @@ describe("generate — degradation ladder", () => {
       },
     );
     expect(r.tier).toBe("paid");
-    // 300*2^0 + 0.1*400 = 340 ; 300*2^1 + 0.9*400 = 960 → distinct ⇒ jitter applied
-    expect(sleeps).toEqual([340, 960]);
+    // The delays below assume this ladder shape; assert it so a new fallback rung explains
+    // itself rather than just breaking the next line.
+    expect(
+      freeSteps().map((s) => s.maxAttempts),
+      "free ladder shape changed — update the expected delays below",
+    ).toEqual([3, 2]);
+    // random() cycles [0.1, 0.9]. Primary rung: 300*2^0 + 0.1*400 = 340, then
+    // 300*2^1 + 0.9*400 = 960. The fallback rung restarts at attempt 0 → 340 again.
+    expect(sleeps).toEqual([340, 960, 340]);
+    // Jitter is applied: no delay equals its un-jittered base (300, 600).
+    expect(sleeps).not.toContain(300);
+    expect(sleeps).not.toContain(600);
   });
 });
