@@ -137,6 +137,23 @@ export function computeLayout(
 }
 
 /**
+ * The SVG viewBox height for a graph whose lowest node sits at `maxLayoutY`.
+ *
+ * The client renders from STORED `layoutY` values and never re-runs `computeLayout`, so it cannot
+ * read `LayoutResult.height` — but it must arrive at exactly the same number, or the graph is
+ * cropped or floats in dead space. Both follow from the same constants:
+ *
+ *     maxLayoutY = TOP_PAD + maxLayer × Y_SPACE          (the layer-0 row, at the bottom)
+ *     height     = TOP_PAD + (maxLayer + 1) × Y_SPACE + 20
+ *                = maxLayoutY + Y_SPACE + 20
+ *
+ * Derived here rather than hardcoded so a change to `Y_SPACE` or `TOP_PAD` moves both together.
+ */
+export function viewBoxHeightFor(maxLayoutY: number): number {
+  return maxLayoutY + Y_SPACE + 20;
+}
+
+/**
  * Study time from difficulty — the prototype's `diffMin`. docs/03 says `estimatedMinutes` is
  * "derived from difficulty"; these are the prototype's numbers.
  */

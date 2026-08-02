@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { db, withDbRetry } from "../client";
 import { concepts, documents, edges, graphs } from "../schema";
 
@@ -69,6 +69,26 @@ export async function getGraph(
   return withDbRetry(async () =>
     db.query.graphs.findFirst({
       where: and(eq(graphs.id, graphId), eq(graphs.userId, userId)),
+    }),
+  );
+}
+
+/**
+ * The caller's most recent graph, or undefined when they have none.
+ *
+ * `/graph` has no id in its path, so the workspace opens on the graph the user was last working
+ * on — the same behaviour as the prototype, which keeps one graph in memory. Ordered by
+ * `createdAt` descending, which the existing `graphs_user_created_idx` serves directly.
+ *
+ * Any status is eligible, deliberately: a `processing` graph is exactly the one whose build the
+ * user is waiting for, and a `failed` one must still be reachable so they see the W4 message
+ * rather than an empty workspace that looks like their upload vanished.
+ */
+export async function getLatestGraph(userId: string): Promise<Graph | undefined> {
+  return withDbRetry(async () =>
+    db.query.graphs.findFirst({
+      where: eq(graphs.userId, userId),
+      orderBy: desc(graphs.createdAt),
     }),
   );
 }

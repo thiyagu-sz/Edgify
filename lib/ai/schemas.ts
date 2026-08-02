@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sanitizeModelText } from "../sanitize";
 
 /**
  * Zod schemas for structured model output, plus the validation guards from
@@ -6,6 +7,27 @@ import { z } from "zod";
  * lets unvalidated output reach the database or the UI (AGENTS.md rule 5).
  *
  * These are pure functions with no I/O, unit-tested in schemas.test.ts.
+ *
+ * ── THIS IS ALSO THE SANITISATION SEAM, AND THAT IS DELIBERATE ───────────────────────────────
+ *
+ * Every `sanitize*` function here strips HTML from the strings it validates, because this is the
+ * point where "raw model output" becomes "validated model output" — and it sits UPSTREAM of all
+ * four places that output travels to:
+ *
+ *   generate() → generation_cache   (content-addressed; a second user with the same document is
+ *                                    served the identical stored bytes)
+ *   generate() → concepts.detailJson / concepts.name / summary   (persisted rows)
+ *              → cloneGraphByContentHash   (copies names and summaries into another user's rows)
+ *              → the UI
+ *
+ * Sanitising at render instead would leave every one of those copies dirty, and would make each
+ * present and future consumer — panel, export, study plan, concept library, anything added later
+ * — individually responsible for remembering. Cleaning here means there is no dirty copy to
+ * distribute in the first place. The client still sanitises what it renders as HTML
+ * (`renderMarkdown`); that is defence in depth, not the primary gate.
+ *
+ * Markdown survives untouched — `**bold**` and `- bullets` are not HTML — so nothing about the
+ * intended formatting is lost. See `sanitizeModelText` in lib/sanitize.ts.
  */
 
 // ── Quiz (MCQs / quick test) ────────────────────────────────────────────────
@@ -28,9 +50,14 @@ export type Quiz = z.infer<typeof quizSchema>;
 export function sanitizeQuiz(raw: unknown): Quiz | null {
   const parsed = quizSchema.safeParse(raw);
   if (!parsed.success) return null;
-  const questions = parsed.data.questions.filter(
-    (question) => question.answer >= 0 && question.answer < question.options.length,
-  );
+  const questions = parsed.data.questions
+    .filter((question) => question.answer >= 0 && question.answer < question.options.length)
+    .map((question) => ({
+      q: sanitizeModelText(question.q),
+      options: question.options.map(sanitizeModelText),
+      answer: question.answer,
+      explanation: sanitizeModelText(question.explanation),
+    }));
   if (questions.length === 0) return null;
   return { questions };
 }
@@ -68,23 +95,33 @@ export function sanitizeConceptDetail(raw: unknown): ConceptDetail | null {
   const parsed = conceptDetailSchema.safeParse(raw);
   if (!parsed.success) return null;
 
-  const definition = parsed.data.definition.trim();
+  // Sanitised BEFORE the emptiness check, deliberately: a "definition" consisting only of markup
+  // is not a definition, and must fail the tier rather than persist as an empty panel.
+  const definition = sanitizeModelText(parsed.data.definition).trim();
   if (definition.length === 0) return null;
 
   const candidate = parsed.data.quiz;
+  const quizQ = candidate ? sanitizeModelText(candidate.q).trim() : "";
   const quiz =
     candidate &&
-    candidate.q.trim().length > 0 &&
+    quizQ.length > 0 &&
     candidate.answer >= 0 &&
     candidate.answer < candidate.options.length
-      ? candidate
+      ? {
+          q: quizQ,
+          options: candidate.options.map(sanitizeModelText),
+          answer: candidate.answer,
+          explanation: sanitizeModelText(candidate.explanation),
+        }
       : null;
 
   return {
     definition,
-    example: parsed.data.example.trim(),
+    example: sanitizeModelText(parsed.data.example).trim(),
     quiz,
-    flashcards: parsed.data.flashcards.filter((c) => c.front.trim().length > 0),
+    flashcards: parsed.data.flashcards
+      .map((c) => ({ front: sanitizeModelText(c.front), back: sanitizeModelText(c.back) }))
+      .filter((c) => c.front.trim().length > 0),
   };
 }
 
@@ -121,16 +158,47 @@ export function sanitizeGraph(raw: unknown): Graph | null {
   const parsed = graphSchema.safeParse(raw);
   if (!parsed.success) return null;
 
-  const slugs = new Set(parsed.data.concepts.map((c) => c.slug));
-  if (slugs.size < MIN_CONCEPTS) return null;
+  /**
+   * Sanitise FIRST, then match. The slug is model output too — it reaches the client as a
+   * `data-*` attribute and as a React key — so it is cleaned like everything else; but cleaning
+   * it after the edges were matched would leave every edge pointing at the pre-sanitisation
+   * spelling and the whole graph would come out edgeless. Both sides are therefore put through
+   * the same function before any comparison happens.
+   */
+  const concepts = parsed.data.concepts.map((c) => ({
+    slug: sanitizeModelText(c.slug).trim(),
+    name: sanitizeModelText(c.name).trim(),
+    difficulty: c.difficulty,
+    summary: sanitizeModelText(c.summary).trim(),
+  }));
+
+  // A concept whose slug or name sanitised away to nothing cannot be rendered or keyed.
+  const usable = concepts.filter((c) => c.slug.length > 0 && c.name.length > 0);
+
+  // Deduplicate on slug, keeping the first. `(graphId, slug)` is UNIQUE (docs/03), so a model
+  // returning the same slug twice would otherwise fail the whole insert — and sanitisation can
+  // newly collide two slugs that differed only in markup.
+  const bySlug = new Map<string, (typeof usable)[number]>();
+  for (const concept of usable) {
+    if (!bySlug.has(concept.slug)) bySlug.set(concept.slug, concept);
+  }
+  const deduped = [...bySlug.values()];
+  if (deduped.length < MIN_CONCEPTS) return null;
+
+  const slugs = new Set(deduped.map((c) => c.slug));
 
   // Drop dangling edges and self-loops.
-  const known = parsed.data.edges.filter(
-    (e) => slugs.has(e.prerequisite) && slugs.has(e.dependent) && e.prerequisite !== e.dependent,
-  );
+  const known = parsed.data.edges
+    .map((e) => ({
+      prerequisite: sanitizeModelText(e.prerequisite).trim(),
+      dependent: sanitizeModelText(e.dependent).trim(),
+    }))
+    .filter(
+      (e) => slugs.has(e.prerequisite) && slugs.has(e.dependent) && e.prerequisite !== e.dependent,
+    );
 
   const edges = breakCycles(known);
-  return { title: parsed.data.title, concepts: parsed.data.concepts, edges };
+  return { title: sanitizeModelText(parsed.data.title).trim(), concepts: deduped, edges };
 }
 
 /** Remove back-edges (DFS) so the prerequisite graph is acyclic — a cycle renders unusable. */

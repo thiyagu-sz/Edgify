@@ -226,9 +226,41 @@ Study plan       → derived entirely from stored concepts, edges and mastery
 Concept library  → same data, different view
 ```
 
-Readiness scoring is the prototype's algorithm: for a target concept, walk the prerequisite
-closure, weight each prerequisite by `1 / depth`, and score `known` as 1, `learning` as 0.5,
-`locked` as 0. Keep it client-side — it is instant and needs no round trip.
+Readiness scoring is the prototype's algorithm. **Corrected 2026-08-01** — this section
+previously read "walk the prerequisite closure, weight each prerequisite by `1 / depth`", which
+is a lossy paraphrase: read literally it suggests only DIRECT prerequisites are scored, and that
+produces different numbers on any graph deeper than one layer. The reference algorithm
+(`closure` / `readiness`, proto:1049–1052) is:
+
+1. Breadth-first from the target's direct prerequisites at depth 1, following prerequisites of
+   prerequisites, recording each ancestor at its **shortest** depth from the target. This is the
+   full **transitive closure**, not the direct parents — a grandparent counts, at half weight.
+2. Weight every ancestor in that closure by `1 / depth`, so nearer prerequisites matter more.
+3. Score `known` as 1, `learning` as 0.5, `locked` as 0, and return
+   `round(100 × Σ(weight × score) / Σ weight)`.
+4. A concept with an empty closure scores 100 — nothing stands between the student and it.
+
+Worked example on the prototype's own curated graph, in its initial state (`calc` and `linalg`
+known, `opt` in progress, everything else locked). The closure of `cnn` is **six** concepts, not
+its two direct prerequisites:
+
+| Ancestor | Depth | Weight | Mastery | Contribution |
+|---|---|---|---|---|
+| `nn` | 1 | 1 | locked | 0 |
+| `bp` | 1 | 1 | locked | 0 |
+| `linalg` | 2 | 0.5 | known | 0.5 |
+| `gd` | 2 | 0.5 | locked | 0 |
+| `opt` | 3 | 0.333 | learning | 0.167 |
+| `calc` | 3 | 0.333 | known | 0.333 |
+
+`round(100 × 1.0 / 3.667)` = **27**. Scoring only the direct prerequisites gives 0 on the same
+data — the size of the difference the old wording hid.
+
+Keep it client-side — it is instant and needs no round trip. `lib/graph/readiness.ts` is the
+implementation, and `readiness.test.ts` pins it against the prototype's own JavaScript, extracted
+from `docs/reference/edgify-prototype.html` and executed as an oracle, so the formula cannot
+drift from the reference again without a test failing. (The 27 above was first written as 25 from
+hand arithmetic; the oracle caught it. That is the argument for the oracle in one line.)
 
 ---
 

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { listConcepts } from "@/lib/db/queries/concepts";
 import { listEdges } from "@/lib/db/queries/edges";
+import { listMastery } from "@/lib/db/queries/mastery";
 import { getGraph } from "@/lib/db/queries/graphs";
 import { withRateLimit } from "@/lib/rate-limit";
 
@@ -25,7 +26,7 @@ import { withRateLimit } from "@/lib/rate-limit";
  *
  * Response contract:
  *   200 `{ status: "processing" }`                     — still building; one round trip
- *   200 `{ status: "ready", title, concepts, edges }`  — the graph
+ *   200 `{ status: "ready", title, concepts, edges, mastery }`  — the graph
  *   200 `{ status: "failed", message }`                — the W4 message
  *   401 / 404 `{ message }`
  */
@@ -66,10 +67,20 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
     return json({ status: graph.status, title: graph.title });
   }
 
-  // Independent reads of different tables, neither depending on the other's result.
-  const [concepts, edges] = await Promise.all([
+  /**
+   * Independent reads of different tables, none depending on another's result — issued together
+   * rather than paying three sequential round trips.
+   *
+   * `mastery` joined this payload in the UI slice. It has to arrive with the graph: node colour,
+   * every readiness ring and the whole study plan are functions of it, so fetching it separately
+   * would mean either a second round trip before the first paint or a visible flash of an
+   * all-locked graph that then recolours. It is the caller's own row set, keyed
+   * `(userId, conceptId)`, so it costs one indexed read and reveals nothing new.
+   */
+  const [concepts, edges, mastery] = await Promise.all([
     listConcepts(userId, graphId),
     listEdges(userId, graphId),
+    listMastery(userId, graphId),
   ]);
 
   // Concept ids are internal; edges are re-expressed in SLUG space so the client never needs them
@@ -93,6 +104,12 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
       // concept-detail route serves on demand.
       hasDetail: concept.detailJson !== null,
     })),
+    // Slug-keyed like `edges`, so the client never handles concept ids for readiness maths and
+    // the payload survives a clone unchanged (a clone mints fresh ids for the same slugs).
+    mastery: mastery.flatMap((row) => {
+      const slug = slugById.get(row.conceptId);
+      return slug && row.state ? [{ slug, state: row.state }] : [];
+    }),
     edges: edges.flatMap((edge) => {
       const prerequisite = slugById.get(edge.prerequisiteId);
       const dependent = slugById.get(edge.dependentId);

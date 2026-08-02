@@ -1,49 +1,105 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { CROSS_ENV_INPUT, CROSS_ENV_OUTPUT } from "@/test/sanitize-fixture";
 import {
   ALL_PAYLOADS_COMBINED,
+  JSDOM_FIREABLE_PAYLOADS,
   XSS_PAYLOADS,
   assertNoExecutableMarkup,
+  renderAndFire,
+  resetXssSentinel,
+  xssFired,
 } from "@/test/xss-payloads";
-import { renderMarkdown } from "./sanitize";
+import { renderMarkdown, sanitizeModelText } from "./sanitize";
 
 /**
  * The highest-severity UI rule (.claude/rules/ui.md): model output is sanitised before it ever
  * reaches dangerouslySetInnerHTML. Model output can be steered by text inside an uploaded
  * document, so these payloads stand in for "a classmate uploads a poisoned PDF, the model echoes
- * it". renderMarkdown must strip every executable vector while keeping the formatting.
- *
- * The assertion that counts is the `window.__xss` sentinel after real DOM insertion. String
- * matching alone would only prove that one spelling was stripped.
+ * it".
  *
  * jsdom's HTML parser is not Chrome's, so the mutation-XSS payloads here are necessary but not
  * sufficient — they are re-run against a real browser in the Playwright pass.
  */
 
-/** Insert into a live document the way the component does, then report the sentinel. */
-function renderIntoDom(md: string): { html: string; fired: unknown } {
-  const html = renderMarkdown(md);
-  const host = document.createElement("div");
-  host.innerHTML = html;
-  document.body.appendChild(host);
-  const fired = window.__xss;
-  host.remove();
-  return { html, fired };
-}
+/**
+ * This file lives in the `unit` project, whose setup file has no DOM concerns, so the sentinel is
+ * reset here rather than globally. Without it the negative control below — which deliberately
+ * FIRES the sentinel — would leave it set for every test after it.
+ */
+beforeEach(() => {
+  resetXssSentinel();
+});
+
+describe("NEGATIVE CONTROL — the corpus is live when nothing sanitises it", () => {
+  /**
+   * Without this block the whole file proves nothing. Every assertion below is "the sentinel did
+   * not fire", which a corpus of inert strings would satisfy just as well as a working sanitiser.
+   * So: render the SAME payloads through raw `innerHTML`, with the same driver, and require that
+   * they DO fire. If this block ever goes green-by-accident, the corpus has decayed and the
+   * assertions beside it have stopped meaning anything.
+   */
+  for (const { name, payload } of JSDOM_FIREABLE_PAYLOADS) {
+    it(`fires unsanitised: ${name}`, () => {
+      resetXssSentinel();
+      const { fired, host } = renderAndFire(payload);
+      host.remove();
+      expect(
+        fired,
+        `the control did not fire for "${name}" — this suite proves nothing`,
+      ).not.toBeNull();
+    });
+  }
+});
 
 describe("renderMarkdown — payload corpus", () => {
   for (const { name, payload } of XSS_PAYLOADS) {
     it(`neutralises: ${name}`, () => {
-      const { html, fired } = renderIntoDom(payload);
-      expect(fired, "script executed — window.__xss was set").toBeUndefined();
+      const html = renderMarkdown(payload);
+      const { fired, host } = renderAndFire(html);
+      host.remove();
+      expect(fired, "script executed").toBeNull();
       expect(() => assertNoExecutableMarkup(html)).not.toThrow();
     });
   }
 
   it("neutralises every payload at once (whole poisoned document echoed)", () => {
-    const { html, fired } = renderIntoDom(ALL_PAYLOADS_COMBINED);
-    expect(fired).toBeUndefined();
+    const html = renderMarkdown(ALL_PAYLOADS_COMBINED);
+    const { fired, host } = renderAndFire(html);
+    host.remove();
+    expect(fired).toBeNull();
     expect(() => assertNoExecutableMarkup(html)).not.toThrow();
+  });
+});
+
+describe("sanitizeModelText — the persist seam", () => {
+  for (const { name, payload } of XSS_PAYLOADS) {
+    it(`strips markup at rest: ${name}`, () => {
+      const stored = sanitizeModelText(payload);
+      // Nothing stored may parse into an element at all — this value is written to the database
+      // and later distributed to other users by the cache and the clone.
+      const host = document.createElement("div");
+      host.innerHTML = stored;
+      expect(host.querySelector("*"), `an element survived storage for "${name}"`).toBeNull();
+
+      // ...and rendering the stored value must still be inert.
+      const { fired, host: rendered } = renderAndFire(renderMarkdown(stored));
+      rendered.remove();
+      expect(fired).toBeNull();
+    });
+  }
+
+  it("keeps markdown formatting, which is not HTML", () => {
+    const stored = sanitizeModelText("## Heading\n\n- **bold** point\n- second");
+    expect(stored).toContain("## Heading");
+    expect(stored).toContain("**bold**");
+    expect(renderMarkdown(stored)).toMatch(/<strong>bold<\/strong>/);
+  });
+
+  it("keeps the payload readable as literal text rather than blanking it", () => {
+    const stored = sanitizeModelText("Real content <img src=x onerror=\"boom()\"> more");
+    expect(stored).toContain("Real content");
+    expect(stored).toContain("more");
   });
 });
 
@@ -57,10 +113,13 @@ describe("renderMarkdown — streaming, chunk boundaries", () => {
   const splitPoints = (s: string) => Array.from({ length: s.length }, (_, i) => i + 1);
 
   it("is safe at every prefix of an img-onerror payload", () => {
-    const payload = "Notes\n\n<img src=x onerror=\"window.__xss='split'\">\n\ntail";
+    const payload = "Notes\n\n<img src=x onerror=\"document.title='EDGIFY-XSS:split'\">\n\ntail";
     for (const cut of splitPoints(payload)) {
-      const { html, fired } = renderIntoDom(payload.slice(0, cut));
-      expect(fired, `executed at prefix length ${cut}`).toBeUndefined();
+      resetXssSentinel();
+      const html = renderMarkdown(payload.slice(0, cut));
+      const { fired, host } = renderAndFire(html);
+      host.remove();
+      expect(fired, `executed at prefix length ${cut}`).toBeNull();
       expect(
         () => assertNoExecutableMarkup(html),
         `executable markup at prefix length ${cut}`,
@@ -69,10 +128,13 @@ describe("renderMarkdown — streaming, chunk boundaries", () => {
   });
 
   it("is safe at every prefix of a script payload", () => {
-    const payload = "# Key points\n\n<script>window.__xss='split'</script>\n\n- a point";
+    const payload = "# Key points\n\n<script>document.title='EDGIFY-XSS:split'</script>\n\n- a point";
     for (const cut of splitPoints(payload)) {
-      const { html, fired } = renderIntoDom(payload.slice(0, cut));
-      expect(fired, `executed at prefix length ${cut}`).toBeUndefined();
+      resetXssSentinel();
+      const html = renderMarkdown(payload.slice(0, cut));
+      const { fired, host } = renderAndFire(html);
+      host.remove();
+      expect(fired, `executed at prefix length ${cut}`).toBeNull();
       expect(
         () => assertNoExecutableMarkup(html),
         `executable markup at prefix length ${cut}`,
@@ -82,12 +144,21 @@ describe("renderMarkdown — streaming, chunk boundaries", () => {
 
   it("is safe when accumulating chunk by chunk, as the component does", () => {
     // Deliberately split mid-attribute-name: "on" + "error=..." reassembles into a handler.
-    const chunks = ["Intro\n\n<img src=x ", "on", "error=", "\"window.__xss='chunked'\"", ">"];
+    const chunks = [
+      "Intro\n\n<img src=x ",
+      "on",
+      "error=",
+      "\"document.title='EDGIFY-XSS:chunked'\"",
+      ">",
+    ];
     let accumulated = "";
     for (const chunk of chunks) {
       accumulated += chunk;
-      const { html, fired } = renderIntoDom(accumulated);
-      expect(fired, `executed after chunk "${chunk}"`).toBeUndefined();
+      resetXssSentinel();
+      const html = renderMarkdown(accumulated);
+      const { fired, host } = renderAndFire(html);
+      host.remove();
+      expect(fired, `executed after chunk "${chunk}"`).toBeNull();
       expect(() => assertNoExecutableMarkup(html)).not.toThrow();
     }
   });
@@ -109,7 +180,27 @@ describe("renderMarkdown — formatting is preserved", () => {
 
   it("keeps benign text from a payload rather than blanking the output", () => {
     // Stripping the attack must not cost the user their notes.
-    const html = renderMarkdown("- A real point\n\n<img src=x onerror=\"window.__xss=1\">");
+    const html = renderMarkdown("- A real point\n\n<img src=x onerror=\"boom()\">");
     expect(html).toContain("A real point");
+  });
+
+  it("keeps a safe link but drops a javascript: one", () => {
+    expect(renderMarkdown("[docs](https://example.com)")).toContain('href="https://example.com"');
+    const dangerous = renderMarkdown("[click](javascript:boom())");
+    expect(dangerous).not.toContain("javascript:");
+  });
+});
+
+describe("cross-environment equality", () => {
+  it("produces byte-identical HTML to the node (no-DOM) run", () => {
+    // The same assertion runs without a `document` in lib/sanitize-ssr.test.ts.
+    expect(renderMarkdown(CROSS_ENV_INPUT)).toBe(CROSS_ENV_OUTPUT);
+  });
+});
+
+describe("the sentinel itself", () => {
+  it("reads clean after a reset", () => {
+    resetXssSentinel();
+    expect(xssFired()).toBeNull();
   });
 });

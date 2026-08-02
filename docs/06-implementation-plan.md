@@ -264,7 +264,7 @@ someone should open one before launch.
   answer `graph_structure` at all, so the ladder cannot reach one by accident. `DEMO_GRAPH` is
   reserved for Phase 6's `/demo` (docs/03 §graphs)
 - Port the graph UI: SVG, panel, concept library, study plan, progress modal
-- Lazy concept detail
+- Lazy concept detail — persisted on the REQUEST PATH, not via `after()` (see slice 3 results)
 - Mastery tracking
 - **Dedupe on `contentHash`** — clone an existing graph instead of regenerating
 - **BLOCKER — the build can outlive its own request.** Found 2026-07-30 by the first live
@@ -288,10 +288,18 @@ someone should open one before launch.
 - [ ] A scanned PDF produces the honest scanned-document message
 - [ ] An 11 MB file is rejected before the body is read
 - [ ] An encrypted PDF fails with a clear message, not a crash
-- [ ] Clicking a concept generates detail once and caches it
-- [ ] The panel scrolls independently; the page behind does not move
-- [ ] Marking mastery updates readiness across the graph
-- [ ] Graph export produces a complete study guide
+- [x] **Clicking a concept generates detail once and caches it** — met 2026-08-01. Asserted by
+      COUNTING requests (`knowledge-graph.detail-cache.test.tsx`), not by "the panel renders":
+      three guards, in-memory cache, in-flight set, and the server's stored `detailJson`
+- [x] **The panel scrolls independently; the page behind does not move** — met 2026-08-01. The
+      four declarations are compared against the prototype's own rule, with five mutation
+      controls; the layout behaviour itself is `test/e2e/graph-proofs.mjs` (needs a browser)
+- [x] **Marking mastery updates readiness across the graph** — met 2026-08-01. The load-bearing
+      word is *across*: marking a foundational concept moves the ring of a concept two layers
+      above it (0% → 33%), which a recolour-the-clicked-node implementation would fail
+- [x] **Graph export produces a complete study guide** — met 2026-08-01. Completeness and inertness
+      checked separately; the W7 `</body>` trap has a control showing the unescaped form
+      truncating under `split("</body>")[0]`
 
 #### Phase 5 slice 2 results (2026-07-30) — query layer, AI widening, three routes
 
@@ -359,6 +367,103 @@ scenario failing exactly as `.claude/rules/database.md` predicts.
 - **A ported prototype quirk, pinned not fixed**: `startX = max(8, …)` prefers an 8px left margin
   over true centring, so a shrunk row that fills the viewport overhangs the 760 viewBox by up to
   8px. Rule 6 says the prototype is the specification; the test records the behaviour and why.
+
+#### Phase 5 slice 3 results (2026-08-01) — the graph UI
+
+**PROOF 5 — model strings cannot execute, and the proof can fail.** The graph is the worst place
+in the product for this, because its content is SHARED: `generation_cache` is content-addressed on
+the document text, so the next student to upload the same PDF is served the byte-identical stored
+detail, and `cloneGraphByContentHash` copies concept names and summaries into their rows. Stored
+XSS with a distribution mechanism attached.
+
+Three rendering contexts, each with a negative control that renders the prototype's own unescaped
+template and **must fire** — 12 firing controls in total, then containment across nine real
+surfaces (node labels, attributes, markdown body, quiz, explanation, flashcards, library, plan,
+chips, plus the unavailable and failed states).
+
+**The sentinel had to be replaced first, and that is the significant finding.** `window.__xss`
+**could never fire in this repo's component tests**, so every `expect(window.__xss).toBeUndefined()`
+in the Phase 4 suite passed identically against a completely unsanitised renderer. Measured, not
+assumed: jsdom compiles an injected handler (`typeof img.onerror === "function"`, source intact)
+and invoking it runs the payload, but the `window` it writes to is jsdom's realm global rather than
+the object vitest exposes to the test. `runScripts: "dangerously"` changes nothing. `document.title`
+does cross, so the corpus writes there and `assertNoExecutableDom` is no longer carrying the whole
+suite alone. The Phase 4 assertions were repaired rather than left green.
+
+Two smaller findings fell out of building the controls, both of which had been quietly weakening
+them: `<details open>` queues its `toggle` event as a TASK, so a payload rendered in one test
+detonated inside a *later* one, on a detached node, presenting as an unrelated failure with no
+offending element anywhere (`flushDeferredHandlers` now drains between tests); and the driver's
+"click everything" step was consuming the application's own controls, including the quiz clicks
+the tests make themselves.
+
+**Sanitisation moved to the validation seam** (`lib/ai/schemas`), upstream of the cache, the
+database, the clone and the UI, rather than at render. A render-time gate leaves the stored and
+cloned payload dirty and makes every present and future consumer individually responsible; there
+is now no dirty copy to distribute. Two consequences worth recording:
+
+- **DOMPurify was replaced by `sanitize-html`.** DOMPurify needs a DOM, which is why the old
+  implementation had a fail-closed branch — correct, but it made server-side sanitisation
+  impossible and made safety depend on a browser global being present in a container.
+  `sanitize-ssr.test.ts` now asserts byte-identical output with no `document` at all, rather than
+  asserting a degraded fallback.
+- **Storage keeps entities encoded; display decodes them.** Measured: `learning rate < 0.01` is
+  stored as `learning rate &lt; 0.01`, which React would render literally — visible corruption of
+  the user's own material, worst in the maths-heavy documents this product is for. Decoding at
+  REST is not safe (a model emitting `&lt;img …&gt;` round-trips into live markup in the database),
+  so `plainText()` decodes at the React boundary, where React re-escapes on output.
+
+**Readiness is pinned against the prototype's own JavaScript**, extracted from the reference HTML
+and executed as an oracle (`test/prototype-oracle.ts`), across the curated graph and 40 randomised
+mastery assignments. This is not ceremony: the worked example in the test was first written as
+**25 from hand arithmetic, and the oracle said 27**. Hand-written expectations would have shipped
+the 25. Mutation drills: uniform weights instead of `1/depth` → 48 tests red; direct prerequisites
+only (the doc's old wording, implemented literally) → 57 red, including closure diffs.
+
+**docs/05 W6 corrected.** It described the algorithm as weighting "each prerequisite by `1 / depth`",
+which reads as direct prerequisites only and produces different numbers on any graph deeper than
+one layer. The reference walks the full transitive closure at shortest depth. On the curated graph
+`cnn` scores 27 with the closure and 0 with the paraphrase — the size of the difference the wording
+hid. The corrected section carries the worked example.
+
+**The poll backoff is now measured, not just documented.** 1.5s for 15s then 3s, asserted as a
+request count under fake timers (~11 in the fast window, ~10 in the next 30s). A test that only
+checked "the graph eventually appears" would pass against a flat 1.5s poll, and the coupling to the
+600/min limit on `GET /api/graph/:id` — which decides whether a class of 30 behind one campus NAT
+gets 429s on their own progress modal — would be lost the first time someone simplified the loop.
+
+**Two accepted spend windows, recorded together** because they are the same shape and should be
+reasoned about as a pair:
+
+| Window | Bound | Why it is accepted |
+|---|---|---|
+| **Graph build** (`finishGraph`) | At most one wasted model call, when two builds for the same graph are genuinely simultaneous | Corruption is fully closed by the conditional `UPDATE … WHERE status = 'processing'`, which takes the row lock first. Closing the spend window too needs a `building` claim status, which docs/03 does not define |
+| **Concept detail** (`setConceptDetail`) | At most one wasted model call, when a user double-clicks a concept fast enough that both requests pass the stored-detail check before either commits | Same mechanism: `UPDATE … WHERE detailJson IS NULL` takes the row lock, so first commit wins and the loser serves the winner's value rather than overwriting it. Closing it needs request coalescing — more machinery than one duplicate call justifies |
+
+Both are bounded by the per-user daily quota. The detail case matters slightly more than it looks:
+the two results are separate generations and the client caches whichever it is handed, so a
+last-write-wins update would leave two tabs — or two users of one graph — permanently holding
+different explanations of the same concept.
+
+**`after()` was NOT adopted, anywhere, including where it would have been easy.** Persisting the
+concept detail off the response path is the obvious tidy-up and it was deliberately not taken:
+§1.6 is an open hard blocker specifically about `after()`'s deadline and zombie exposure, and
+adopting it in a small safe-looking corner would decide that question by accident, in the place
+where the consequences are least visible, before the place where they are worst is fixed. Concept
+detail is one model call inside one request — well inside the 300s deadline, unlike the build.
+
+**The client's timeout retry deliberately does not re-spend.** With `ZOMBIE-PROCESSING-ROW`
+unfixed, a build killed by the platform leaves its row `processing` forever and the build route's
+idempotency check refuses only *finished* graphs — so a retry button that re-fires the build is
+permitted and spends again. "Keep waiting" resumes polling only, and a test guards that decision
+with a pointer to revisit it when §1.6 is fixed.
+
+**One deliberate deviation from the prototype**, recorded rather than silently taken: the
+prototype's `@media (max-width: 720px)` rule hides the label `<span>` inside every `.btn-primary` /
+`.btn-secondary` to collapse icon+label toolbar buttons to icons. Applied globally it also empties
+the one button in the app whose span is its entire content and has no icon behind it — "Try again"
+in the Quick Notes error state — leaving an empty box at the moment the user is trying to recover.
+Scoped to `.gbar-right`. The visible design is identical either way.
 
 #### End-to-end timing, live (2026-07-30)
 

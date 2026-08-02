@@ -1,4 +1,4 @@
-import { and, asc, eq, exists } from "drizzle-orm";
+import { and, asc, eq, exists, isNull } from "drizzle-orm";
 import { db, withDbRetry } from "../client";
 import { concepts, graphs } from "../schema";
 
@@ -66,11 +66,25 @@ export async function getConcept(
 
 /**
  * Persist a lazily-generated concept explanation (W5 step 4). Returns false when the concept is
- * missing or belongs to someone else, so an unowned uuid writes nothing.
+ * missing, belongs to someone else, or ALREADY HAS a detail — so an unowned uuid writes nothing
+ * and a second writer never overwrites the first.
  *
  * Only ever called with VALIDATED model output (AGENTS.md rule 5), and never with demo content —
  * `detailJson` is a row in the user's own workspace, so a curated sample written here would
  * misrepresent their document exactly as a demo graph would (docs/03 §graphs, docs/04 §2).
+ *
+ * FIRST COMMIT WINS. The `detailJson IS NULL` predicate is part of the same UPDATE rather than a
+ * read-then-write, so it takes the row lock and two concurrent writers cannot both succeed. The
+ * loser is told so by the `false` return and re-reads the stored value instead of clobbering it,
+ * which matters because the two results are NOT interchangeable: they are separate generations,
+ * and the client caches whichever it was handed.
+ *
+ * The accepted cost is a bounded SPEND window — at most one wasted model call, only when a user
+ * double-clicks a concept fast enough that both requests pass the route's stored-detail check
+ * before either commits. It is bounded by the daily quota and is the same shape as the graph-build
+ * window in `finishGraph`; both are recorded together in docs/06 Phase 5 rather than left as
+ * folklore. Closing it properly needs request coalescing, which is more machinery than one
+ * duplicate call justifies.
  */
 export async function setConceptDetail(
   userId: string,
@@ -81,7 +95,13 @@ export async function setConceptDetail(
     const rows = await db
       .update(concepts)
       .set({ detailJson, detailGeneratedAt: new Date() })
-      .where(and(eq(concepts.id, conceptId), ownedByUser(userId)))
+      .where(
+        and(
+          eq(concepts.id, conceptId),
+          isNull(concepts.detailJson),
+          ownedByUser(userId),
+        ),
+      )
       .returning({ id: concepts.id });
     return rows.length > 0;
   });

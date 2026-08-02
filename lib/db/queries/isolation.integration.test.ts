@@ -286,6 +286,46 @@ describe("cross-user isolation: graphs, concepts, edges", () => {
     expect((await getConcept(A, concept.id))?.detailJson).toEqual({ definition: "mine" });
   });
 
+  it("setConceptDetail: first commit wins — a second write is refused, not applied", async () => {
+    /**
+     * The write is conditional on `detailJson IS NULL`, in the same statement as the update, so
+     * two concurrent requests cannot both succeed and the loser is TOLD it lost.
+     *
+     * That matters because the two results are not interchangeable: they are separate
+     * generations, and the client caches whichever it is handed. A last-write-wins update would
+     * leave two tabs — or two users of the same graph — permanently holding different
+     * explanations of one concept, with no way to tell which is stored.
+     *
+     * The accepted cost is a bounded spend window: at most one wasted model call when a user
+     * double-clicks fast enough that both requests pass the route's stored-detail check before
+     * either commits. Recorded in docs/06 Phase 5 beside the graph-build window.
+     */
+    const { graphId } = await seedGraph(A);
+    const [concept] = await listConcepts(A, graphId);
+
+    expect(await setConceptDetail(A, concept.id, { definition: "first" })).toBe(true);
+    expect(await setConceptDetail(A, concept.id, { definition: "second" })).toBe(false);
+    expect((await getConcept(A, concept.id))?.detailJson).toEqual({ definition: "first" });
+  });
+
+  it("setConceptDetail: two concurrent writers produce exactly one winner", async () => {
+    // The sequential case above cannot prove the rule — by the time the second statement runs the
+    // first has committed, so Postgres never arbitrates two live writes. Issuing them together is
+    // what exercises the row lock.
+    const { graphId } = await seedGraph(A);
+    const [concept] = await listConcepts(A, graphId);
+
+    const results = await Promise.all([
+      setConceptDetail(A, concept.id, { definition: "writer-1" }),
+      setConceptDetail(A, concept.id, { definition: "writer-2" }),
+      setConceptDetail(A, concept.id, { definition: "writer-3" }),
+    ]);
+
+    expect(results.filter(Boolean), "more than one writer committed").toHaveLength(1);
+    const stored = (await getConcept(A, concept.id))?.detailJson as { definition: string };
+    expect(["writer-1", "writer-2", "writer-3"]).toContain(stored.definition);
+  });
+
   it("listEdges: owner sees the prerequisite structure; the other user sees none", async () => {
     const { graphId } = await seedGraph(A);
     expect(await listEdges(A, graphId)).toHaveLength(2); // positive control

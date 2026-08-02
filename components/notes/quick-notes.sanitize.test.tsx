@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FORMATS } from "@/lib/ai/prompts";
 import { installFakeNotesApi } from "@/test/fake-notes-api";
-import { ALL_PAYLOADS_COMBINED, XSS_PAYLOADS, assertNoExecutableDom } from "@/test/xss-payloads";
+import {
+  ALL_PAYLOADS_COMBINED,
+  XSS_PAYLOADS,
+  assertNoExecutableDom,
+  fireDeferredHandlers,
+  xssFired,
+} from "@/test/xss-payloads";
 import { QuickNotes } from "./quick-notes";
 
 /**
@@ -51,6 +57,22 @@ function renderedRoot(): HTMLElement {
   return document.body;
 }
 
+/**
+ * Drive the events a real browser would drive, then assert nothing executed and nothing
+ * executable survived.
+ *
+ * The dispatch step is not decoration. jsdom loads no subresources, so an injected
+ * `<img src=x>` never errors on its own and its handler is compiled but never invoked; without
+ * driving the event, "the sentinel did not fire" would be true of an unsanitised renderer too.
+ * The sentinel itself is `document.title`, not `window.__xss` — see test/xss-payloads.ts for the
+ * measurement showing why the latter can never fire here.
+ */
+function expectNothingExecuted(): void {
+  fireDeferredHandlers(renderedRoot());
+  expect(xssFired(), "injected script executed in the rendered notes").toBeNull();
+  expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+}
+
 describe("sanitisation — streaming prose, every markdown format", () => {
   for (const format of MD_FORMATS) {
     it(`neutralises poisoned output for "${format.label}"`, async () => {
@@ -64,8 +86,7 @@ describe("sanitisation — streaming prose, every markdown format", () => {
         expect(document.querySelector(".prose")).toBeTruthy();
       });
 
-      expect(window.__xss, "injected script executed in the rendered notes").toBeUndefined();
-      expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+      expectNothingExecuted();
     });
   }
 
@@ -74,7 +95,7 @@ describe("sanitisation — streaming prose, every markdown format", () => {
     installFakeNotesApi({
       notes: {
         kind: "stream",
-        chunks: ["Intro\n\n<img src=x ", "on", "error=", "\"window.__xss='tick'\"", ">\n\ntail"],
+        chunks: ["Intro\n\n<img src=x ", "on", "error=", "\"document.title='EDGIFY-XSS:tick'\"", ">\n\ntail"],
       },
     });
 
@@ -83,8 +104,7 @@ describe("sanitisation — streaming prose, every markdown format", () => {
     await waitFor(() => {
       expect(document.querySelector(".prose")).toBeTruthy();
     });
-    expect(window.__xss).toBeUndefined();
-    expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+    expectNothingExecuted();
   });
 
   it("still renders the legitimate notes around the payload", async () => {
@@ -116,8 +136,7 @@ describe("sanitisation — buffered prose (cache hit / demo fallback)", () => {
     await waitFor(() => {
       expect(document.querySelector(".prose")).toBeTruthy();
     });
-    expect(window.__xss).toBeUndefined();
-    expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+    expectNothingExecuted();
   });
 
   it("neutralises poisoned output rendered underneath the demo banner", async () => {
@@ -130,8 +149,7 @@ describe("sanitisation — buffered prose (cache hit / demo fallback)", () => {
     await waitFor(() => {
       expect(screen.getByText(/Showing sample content/)).toBeVisible();
     });
-    expect(window.__xss).toBeUndefined();
-    expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+    expectNothingExecuted();
   });
 });
 
@@ -158,8 +176,7 @@ describe("sanitisation — quiz formats", () => {
         expect(document.querySelector(".quiz-q")).toBeTruthy();
       });
 
-      expect(window.__xss).toBeUndefined();
-      expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+      expectNothingExecuted();
 
       // Answer one question so the explanation surface renders too — it is model output as well.
       const firstOption = document.querySelectorAll(".q-opt")[0] as HTMLButtonElement;
@@ -168,22 +185,31 @@ describe("sanitisation — quiz formats", () => {
       await waitFor(() => {
         expect(document.querySelector(".q-fb")).toBeTruthy();
       });
-      expect(window.__xss).toBeUndefined();
-      expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+    expectNothingExecuted();
     });
   }
 
-  it("renders quiz payloads as literal text (React escaping), not markup", async () => {
+  /**
+   * CHANGED 2026-08-01, and the change is the point.
+   *
+   * This used to assert the payload was VISIBLE as literal text — `.q-q` containing the string
+   * `<script>` — which was the correct outcome when React escaping was the only defence. Model
+   * output is now stripped of markup at the validation seam (`lib/ai/schemas`), upstream of the
+   * cache, the database and the clone, so the tag is gone before it is ever stored and the
+   * question renders as the question. The surrounding legitimate text survives, which is the
+   * property that matters: sanitisation must not cost the user their content.
+   */
+  it("strips markup from quiz text at the seam, keeping the legitimate content", async () => {
     installFakeNotesApi({
       notes: {
         kind: "final",
         data: {
           questions: [
             {
-              q: "<script>window.__xss='q'</script>What is a weight?",
-              options: ["<img src=x onerror=\"window.__xss='opt'\">A", "B", "C", "D"],
+              q: "<script>document.title='EDGIFY-XSS:q'</script>What is a weight?",
+              options: ["<img src=x onerror=\"document.title='EDGIFY-XSS:opt'\">A", "B", "C", "D"],
               answer: 0,
-              explanation: "<svg onload=\"window.__xss='exp'\"></svg>Because.",
+              explanation: "<svg onload=\"document.title='EDGIFY-XSS:exp'\"></svg>Because.",
             },
           ],
         },
@@ -196,16 +222,19 @@ describe("sanitisation — quiz formats", () => {
       expect(document.querySelector(".q-q")).toBeTruthy();
     });
 
-    // The payload is visible as text — which is the correct, honest outcome.
-    expect(document.querySelector(".q-q")?.textContent).toContain("<script>");
+    // The markup is gone — not escaped-and-shown, removed before it was ever stored.
+    expect(document.querySelector(".q-q")?.textContent).not.toContain("<script>");
+    expect(document.querySelector(".q-q")?.textContent).not.toContain("document.title");
+    // ...the question itself is intact...
     expect(document.querySelector(".q-q")?.textContent).toContain("What is a weight?");
-    // ...and produced no elements.
+    // ...and no element was produced.
     expect(document.querySelector(".q-q")?.querySelector("script")).toBeNull();
+    // The option keeps its visible label even though its payload was removed.
+    expect(document.querySelectorAll(".q-opt")[0]?.textContent).toContain("A");
 
     await user.click(document.querySelectorAll(".q-opt")[0] as HTMLButtonElement);
     await waitFor(() => expect(document.querySelector(".q-fb")).toBeTruthy());
 
-    expect(window.__xss).toBeUndefined();
-    expect(() => assertNoExecutableDom(renderedRoot())).not.toThrow();
+    expectNothingExecuted();
   });
 });

@@ -24,7 +24,6 @@
     "@sentry/nextjs": "^10.68.0",
     "ai": "^7.0.37",
     "better-auth": "^1.6.24",
-    "dompurify": "^3.4.12",
     "drizzle-orm": "^0.45.2",
     "jspdf": "^4.2.1",
     "mammoth": "^1.12.0",
@@ -33,6 +32,7 @@
     "pg": "^8.22.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "sanitize-html": "^2.17.6",
     "unpdf": "^1.8.0",
     "zod": "^4.4.3"
   },
@@ -48,6 +48,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sanitize-html": "^2.16.1",
     "babel-plugin-react-compiler": "1.0.0",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",

@@ -1,19 +1,11 @@
 import { jsPDF } from "jspdf";
-import { renderMarkdown } from "./sanitize";
+import { escapeAttribute, renderMarkdown } from "./sanitize";
 
 /**
  * Client-side export, ported from docs/reference/edgify-prototype.html (W7, docs/05). No server
  * cost, no failure mode. PDF via jsPDF (walks the markdown line by line as plain text — no HTML
  * is ever executed); DOC via a Word-compatible HTML blob downloaded as `.doc`.
  */
-
-function escapeHtml(s: string): string {
-  return String(s).replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
-  );
-}
 
 function slug(s: string): string {
   return (
@@ -40,11 +32,12 @@ function downloadBlob(blob: Blob, filename: string): void {
 
 export function exportDoc(title: string, markdown: string): void {
   // Rendered through the SAME chokepoint as the on-screen prose (lib/sanitize). Keeping a second
-  // marked+DOMPurify pair here meant a second policy: this path used DOMPurify's defaults and so
-  // let <style> through into the exported document after the on-screen path had been tightened.
-  // A `.doc` outlives the session and is opened elsewhere, so it needs the stricter policy, not
-  // the laxer one. This also neutralises the W7 trap: a literal `</body>` in model content is
-  // escaped to text, and we build the wrapper by concatenation without splicing around it.
+  // marked+sanitiser pair here meant a second policy, and they drifted: this path once used
+  // DOMPurify's defaults and so let <style> through into the exported document after the
+  // on-screen path had been tightened. A `.doc` outlives the session and is opened elsewhere, so
+  // it needs the stricter policy, not the laxer one. This also neutralises the W7 trap: a literal
+  // `</body>` in model content is escaped to text, and the wrapper is built by concatenation
+  // without splicing around it (lib/graph/study-guide.test.ts has the control).
   const body = renderMarkdown(markdown);
   const html =
     "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
@@ -52,7 +45,7 @@ export function exportDoc(title: string, markdown: string): void {
     " h1{font-size:19pt;margin:0 0 10pt} h2{font-size:14pt;margin:16pt 0 6pt}" +
     " h3{font-size:12pt;margin:12pt 0 5pt} ul,ol{margin:6pt 0 6pt 18pt}" +
     " li{margin:3pt 0} p{margin:6pt 0}</style></head><body><h1>" +
-    escapeHtml(title) +
+    escapeAttribute(title) +
     "</h1>" +
     body +
     "</body></html>";

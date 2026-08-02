@@ -1,14 +1,23 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 /**
  * Workspace top bar — shared chrome for the authenticated app, ported from the prototype's
- * `#appHeader` (docs/reference/edgify-prototype.html). Server Component (static; no state).
+ * `#appHeader` (docs/reference/edgify-prototype.html).
  *
- * The two-mode switcher is part of the settled design, so both pills are rendered for fidelity.
- * "Quick notes" is the active route; "Knowledge graph" is DEFERRED to Phase 5 — rendered inert
- * (disabled) rather than linking to a route that does not exist yet. The brand returns home.
+ * The two-mode switcher is part of the settled design. Both pills are now live: "Knowledge graph"
+ * was rendered inert through Phase 4 because `/graph` did not exist, and became a real link when
+ * the graph UI landed. The active pill follows the route, so the switcher reflects where the user
+ * actually is rather than a state this component holds. The brand returns home.
+ *
+ * A Client Component only because `usePathname` needs one — there is no other state here.
  */
 export function TopBar() {
+  const pathname = usePathname();
+  const onGraph = pathname?.startsWith("/graph") ?? false;
+
   return (
     <header className="topbar">
       <Link href="/" className="brand" aria-label="Edgify — home">
@@ -24,20 +33,22 @@ export function TopBar() {
       </Link>
       <div className="nav-spacer" />
       <div className="pill-group" role="tablist" aria-label="Feature">
-        <button className="seg" role="tab" aria-selected="true" type="button">
-          Quick notes
-        </button>
-        {/* Knowledge graph arrives in Phase 5; inert until then. */}
-        <button
+        <Link
+          href="/notes"
           className="seg"
           role="tab"
-          aria-selected="false"
-          type="button"
-          disabled
-          title="Knowledge graph — coming soon"
+          aria-selected={!onGraph}
+        >
+          Quick notes
+        </Link>
+        <Link
+          href="/graph"
+          className="seg"
+          role="tab"
+          aria-selected={onGraph}
         >
           Knowledge graph
-        </button>
+        </Link>
       </div>
       <div className="nav-spacer" />
     </header>
