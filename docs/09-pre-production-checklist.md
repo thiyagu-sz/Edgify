@@ -21,7 +21,18 @@ The single worst failure available to this system. Anyone with the key spends yo
 ```bash
 # Pre-commit: scan the staged diff for secret VALUES, not variable names. Matching identifiers
 # (e.g. GOOGLE_CLIENT_SECRET) only produces false positives; match the value that follows.
-git diff --cached | grep -iE "sk-or-v1|postgres://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https" \
+#
+# CORRECTED 2026-08-02. This line had drifted from AGENTS.md and still carried the ORIGINAL,
+# known-broken pattern: `sk-or-v1` (the bare prefix, which fires on every doc showing the key
+# format — an alert that is always noise gets waved through) and `postgres://` (which is NOT a
+# substring of `postgresql://`, the form Neon actually issues and `.env.local` actually uses, so
+# it was blind to the exact shape a real leak here would take). AGENTS.md fixed both on
+# 2026-07-29; this copy was not updated, so anyone following THIS checklist at launch — the one
+# moment it matters most — was running the blind version.
+#
+# AGENTS.md rule 1 is the source of truth for this pattern, and test/secret-scan.test.ts reads it
+# from there and asserts both directions. Keep this copy identical or, better, run it from there.
+git diff --cached | grep -iE "sk-or-v1-[A-Za-z0-9_-]{20,}|postgres(ql)?://[^\"]*@|client_secret\s*[:=]\s*[\"'][^\"']+|SENTRY_DSN=https" \
   && echo "SECRET VALUE STAGED — DO NOT COMMIT" || echo "clean"
 
 # Pre-deploy: the built client bundle must contain no key, and no secret may be NEXT_PUBLIC_.

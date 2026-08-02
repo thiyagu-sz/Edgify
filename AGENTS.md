@@ -45,19 +45,39 @@ than assumed:
   of `postgresql://`, so this check had been blind to the exact URL shape this project uses. Now
   `postgres(ql)?://`.
 
-**Known baseline — three files, and only these three:**
+**Known baseline — eight files. CORRECTED 2026-08-02: this list said "three files, and only
+these three", and that was wrong.** A whole-tree run finds eight, so five hits were undocumented
+and a reader following this section would have treated each as a possible live credential — or,
+worse, learned to wave the whole check through. The list is now the real one, and
+`test/secret-scan.test.ts` pins it: adding a ninth credential-shaped file fails the suite until
+it is either removed or documented here.
+
+*Pattern text, which necessarily matches itself:*
+
+- **This file** — the command above contains `client_secret\s*[:=]\s*[\"'][^\"']+`, which is
+  itself a `client_secret` assignment. Not worth contorting the regex to avoid.
+- `docs/09-pre-production-checklist.md` — carries the same command for the launch checklist.
+
+*Deliberate placeholders, which must stay credential-SHAPED to be useful:*
 
 - `.env.example` — its placeholder `postgresql://user:password@…` line.
+- `Dockerfile` — build-time `DATABASE_URL` and `GOOGLE_CLIENT_SECRET` placeholders, needed
+  because `lib/env.ts` validates at boot and `next build` would otherwise refuse to run.
+
+*Test fixtures and local test databases:*
+
 - `test/secret-scan.test.ts` — credential-shaped fixtures, which must match or the test proves
   nothing. Written as `EXAMPLE_*` bodies on RFC 2606 `.invalid` hosts so a hit is dismissible at
   a glance, and deliberately not obfuscated, so a real key pasted there is still caught.
-- **This file**, whenever the command above is edited: the pattern matches its own text, because
-  `client_secret\s*[:=]\s*[\"'][^\"']+` is itself a `client_secret` assignment. Harmless, and not
-  worth contorting the regex to avoid.
+- `lib/env.test.ts` — a Neon-shaped `DATABASE_URL` fixture for the env validator.
+- `test/setup-env.ts`, `test/setup-component.ts` — `postgresql://test:test@localhost/…` defaults
+  for the unit and component suites.
 
-Neither is suppressed. Telling a placeholder from a real credential by regex means trusting the
-literal string `user`, which is a bypass waiting to happen. Treat hits from these two files as
-the baseline and **anything else as real** until inspected.
+None is suppressed, and the regex is not loosened to exclude them. Telling a placeholder from a
+real credential by regex means trusting the literal string `user` — or trusting `localhost`, which
+is the same bet — and that is a bypass waiting to happen: a real password against a local database
+is still a real password. So the baseline is documented and pinned instead. Treat hits from these
+eight as the baseline and **anything else as real** until inspected.
 
 **This command is covered by `test/secret-scan.test.ts`**, which reads the pattern out of *this
 file* — so the doc stays the source of truth — and asserts both directions: every credential

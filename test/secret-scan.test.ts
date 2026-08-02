@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -127,5 +128,94 @@ describe("secret scan: the documented baseline", () => {
     const source = readFileSync(AGENTS_MD, "utf8");
     expect(source).toMatch(/known baseline/i);
     expect(source).toContain(".env.example");
+  });
+});
+
+/**
+ * THE BASELINE IS PINNED TO THE WHOLE TREE, not just asserted to be mentioned.
+ *
+ * Added 2026-08-02, because the documented baseline was WRONG: AGENTS.md said "three files, and
+ * only these three" and a whole-tree run found eight. Five standing hits were undocumented, which
+ * is the failure mode this scan is least able to survive — a reader who meets an undocumented hit
+ * either burns time proving a placeholder is a placeholder, or stops reading hits altogether.
+ *
+ * So the set is enumerated here and compared. Two directions, both of which matter:
+ *
+ *   - a NEW matching file fails until it is documented (or, if it is a real credential, removed);
+ *   - a file that STOPS matching fails too, because the deliberate placeholders and the
+ *     credential-shaped fixtures are load-bearing — if `test/secret-scan.test.ts` stopped
+ *     matching, this whole suite would be testing a pattern that catches nothing.
+ */
+describe("secret scan: the baseline matches the tree", () => {
+  const EXPECTED_BASELINE = [
+    ".env.example",
+    "AGENTS.md",
+    "Dockerfile",
+    "docs/09-pre-production-checklist.md",
+    "lib/env.test.ts",
+    "test/secret-scan.test.ts",
+    "test/setup-component.ts",
+    "test/setup-env.ts",
+  ];
+
+  /**
+   * Every file whose CONTENT matches the documented pattern.
+   *
+   * `--cached --others --exclude-standard` — tracked files PLUS untracked ones that are not
+   * gitignored. Tracked alone is not enough and that was a real hole in the first version of this
+   * test: the scan it backs runs on `git diff --cached`, so the population that matters is
+   * "everything that could be in the next commit", and a brand-new file holding a live credential
+   * is exactly the case worth catching. Gitignored files (`.env.local`) stay excluded — they are
+   * where secrets are SUPPOSED to live.
+   */
+  function matchingFiles(): string[] {
+    const listed = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    const regex = new RegExp(pattern, "i");
+    const hits: string[] = [];
+    for (const file of listed.split("\n").map((f) => f.trim()).filter(Boolean)) {
+      let content: string;
+      try {
+        content = readFileSync(join(process.cwd(), file), "utf8");
+      } catch {
+        continue; // binary or unreadable — the scan is about text anyway
+      }
+      if (content.split("\n").some((line) => regex.test(line))) hits.push(file);
+    }
+    return hits.sort();
+  }
+
+  it("finds exactly the documented set — no more, no fewer", () => {
+    expect(
+      matchingFiles(),
+      "The standing secret-scan hits no longer match the baseline in AGENTS.md. If you added a " +
+        "credential-shaped fixture, document it there. If this is a REAL credential, remove it " +
+        "and rotate it — deleting the file does not remove it from history.",
+    ).toEqual(EXPECTED_BASELINE);
+  });
+
+  it("AGENTS.md names every file in the baseline", () => {
+    const source = readFileSync(AGENTS_MD, "utf8");
+    for (const file of EXPECTED_BASELINE) {
+      // AGENTS.md refers to itself as "this file" rather than by name.
+      if (file === "AGENTS.md") continue;
+      expect(source, `${file} matches the scan but is not documented as baseline`).toContain(file);
+    }
+  });
+
+  it("docs/09 runs the SAME pattern as AGENTS.md, so the launch checklist is not blind", () => {
+    /**
+     * The specific regression this catches: docs/09 carried the original pattern — `sk-or-v1` and
+     * `postgres://` — long after AGENTS.md fixed both. `postgres://` is not a substring of
+     * `postgresql://`, so the launch checklist was blind to the exact URL shape Neon issues, at
+     * the one moment the check matters most.
+     */
+    const checklist = readFileSync(join(process.cwd(), "docs/09-pre-production-checklist.md"), "utf8");
+    const theirs = checklist.match(/^git diff --cached \| grep -iE "(.+)" \\\s*$/m)?.[1];
+    expect(theirs, "no pre-commit scan command found in docs/09").toBeTruthy();
+    expect(theirs).toBe(pattern);
   });
 });
