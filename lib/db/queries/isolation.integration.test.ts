@@ -23,6 +23,7 @@ import {
   failGraph,
   finishGraph,
   getGraph,
+  getLatestGraph,
 } from "./graphs";
 import { readLedger, recordLedger } from "./ledger";
 import { listMastery, upsertMastery } from "./mastery";
@@ -124,6 +125,7 @@ const CASE_NAMES = [
   "notes.getNote",
   "notes.listNotes",
   "graphs.getGraph",
+  "graphs.getLatestGraph",
   "graphs.finishGraph",
   "graphs.failGraph",
   "concepts.listConcepts",
@@ -259,6 +261,38 @@ describe("cross-user isolation: graphs, concepts, edges", () => {
     const { graphId } = await seedGraph(A);
     expect((await getGraph(A, graphId))?.id).toBe(graphId); // positive control
     expect(await getGraph(B, graphId)).toBeUndefined(); // isolation
+  });
+
+  it("getLatestGraph: each user gets their OWN most recent graph, never another's", async () => {
+    /**
+     * `/graph` has no id in its path, so this is what decides which graph the workspace opens
+     * on. An unscoped version would open user B's workspace on user A's most recent upload —
+     * the whole graph, its concepts and its edges — with no id ever guessed. Worse than the
+     * usual IDOR shape, because it needs no attacker at all: it just happens.
+     */
+    const seededA = await seedGraph(A);
+    const seededB = await seedGraph(B);
+
+    const latestA = await getLatestGraph(A);
+    const latestB = await getLatestGraph(B);
+
+    expect(latestA?.id).toBe(seededA.graphId); // positive control
+    expect(latestB?.id).toBe(seededB.graphId); // positive control
+    expect(latestA?.userId).toBe(A);
+    expect(latestB?.userId).toBe(B);
+    // The ordering is `createdAt DESC` with no user predicate in the ORDER BY, so B's newer
+    // graph is the one an unscoped query would hand to A.
+    expect(latestA?.id).not.toBe(seededB.graphId); // isolation
+  });
+
+  it("getLatestGraph: a user with no graphs gets nothing, not someone else's", async () => {
+    // Fresh users: A and B are shared across this file and have graphs by now, so "has none"
+    // has to be established rather than assumed.
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+    await seedGraph(owner);
+    expect((await getLatestGraph(owner))?.userId).toBe(owner); // positive control
+    expect(await getLatestGraph(stranger)).toBeUndefined(); // isolation
   });
 
   it("listConcepts: owner sees the nodes; the other user sees none", async () => {

@@ -227,14 +227,20 @@ async function proveGraphXss(browser, cookie) {
   await page.locator(".panel .def").waitFor();
 
   // Visit every surface: the panel tabs, the library and the plan.
-  await page.getByRole("tab", { name: "Quiz" }).click();
+  await page.getByRole("tab", { name: "Quiz", exact: true }).click();
   await page.locator(".q-opt").first().click();
-  await page.getByRole("tab", { name: "Cards" }).click();
-  await page.getByRole("tab", { name: "Concepts" }).click();
+  await page.locator(".q-fb").first().waitFor();
+  await page.getByRole("tab", { name: "Cards", exact: true }).click();
+  await page.getByRole("tab", { name: "Concepts", exact: true }).click();
   await page.locator(".cc").first().waitFor();
-  await page.getByRole("tab", { name: "Study plan" }).click();
-  await page.getByRole("tab", { name: "Graph" }).click();
-  await page.locator(".node-g").nth(3).click();
+  await page.getByRole("tab", { name: "Study plan", exact: true }).click();
+  // `exact: true` throughout: the top bar's "Knowledge graph" link is also role="tab", so a
+  // substring match on "Graph" is ambiguous and Playwright's strict mode rejects it.
+  await page.getByRole("tab", { name: "Graph", exact: true }).click();
+  // `force: true` because an SVG <g>'s own <text> child intercepts pointer events, so
+  // Playwright's actionability check never settles. The click still reaches React's handler on
+  // the <g>; what is being exercised here is the panel re-render, not hit-testing.
+  await page.locator(".node-g").nth(3).click({ force: true });
 
   // Chromium fires img/svg/details handlers on its own — no dispatching here, deliberately.
   await page.waitForTimeout(2000);

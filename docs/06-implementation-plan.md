@@ -291,9 +291,11 @@ someone should open one before launch.
 - [x] **Clicking a concept generates detail once and caches it** — met 2026-08-01. Asserted by
       COUNTING requests (`knowledge-graph.detail-cache.test.tsx`), not by "the panel renders":
       three guards, in-memory cache, in-flight set, and the server's stored `detailJson`
-- [x] **The panel scrolls independently; the page behind does not move** — met 2026-08-01. The
-      four declarations are compared against the prototype's own rule, with five mutation
-      controls; the layout behaviour itself is `test/e2e/graph-proofs.mjs` (needs a browser)
+- [x] **The panel scrolls independently; the page behind does not move** — met 2026-08-01, and
+      VERIFIED IN CHROMIUM 2026-08-02: wheeling the panel to its end leaves `window.scrollY` at 0
+      (panel `scrollTop 1249`), and the control with `overscroll-behavior: auto` scrolls the page
+      to 78. The four declarations are also compared against the prototype's own rule, with five
+      mutation controls
 - [x] **Marking mastery updates readiness across the graph** — met 2026-08-01. The load-bearing
       word is *across*: marking a foundational concept moves the ring of a concept two layers
       above it (0% → 33%), which a recolour-the-clicked-node implementation would fail
@@ -464,6 +466,62 @@ prototype's `@media (max-width: 720px)` rule hides the label `<span>` inside eve
 the one button in the app whose span is its entire content and has no icon behind it — "Try again"
 in the Quick Notes error state — leaving an empty box at the moment the user is trying to recover.
 Scoped to `.gbar-right`. The visible design is identical either way.
+
+#### Phase 5 verification against real Postgres and a real browser (2026-08-02)
+
+The integration and browser proofs had been **written but unrun across three slices** — no
+container runtime and no server in the authoring environment. Both suites were run properly here.
+`npm test` completed end to end for the first time: **646 tests, 45 files, all three projects.**
+
+**One real defect, found by the repo's own coverage guard.** `getLatestGraph` — added in slice 3
+so `/graph` knows which graph to open on — had **no cross-user isolation case**, and the guard in
+`isolation.integration.test.ts` (which auto-discovers every exported query function) failed the
+build:
+
+```
+AssertionError: Query functions with no isolation coverage — add a case in
+isolation.integration.test.ts:
+graphs.getLatestGraph: expected [ 'graphs.getLatestGraph' ] to deeply equal []
+```
+
+The function was in fact scoped (`eq(graphs.userId, userId)`), so this was a missing *proof*
+rather than a live leak — but it is exactly the gap that guard exists to catch, and it could not
+have been caught in the authoring environment. Worth being precise about the shape it would have
+had: `/graph` takes no id from the path, so an unscoped version would open user B's workspace on
+user A's most recent upload — the whole graph, its concepts and its edges — **with no id ever
+guessed and no attacker involved**. That is worse than the usual IDOR shape; it would just happen.
+Two cases added: each user gets their own most recent graph, and a user with no graphs gets
+nothing rather than someone else's.
+
+**The two `setConceptDetail` concurrency drills pass against real Postgres.** Sequential
+first-commit-wins, and three genuinely concurrent writers producing exactly one winner — the
+sequential case alone cannot prove the rule, because by the time the second statement runs the
+first has committed and Postgres never arbitrates two live writes.
+
+**`test/e2e/graph-proofs.mjs` — 8/8, including both negative controls.**
+
+| Check | Result |
+|---|---|
+| Panel is a bounded, scrollable region (premise) | panel scrollable, page scrollable |
+| Computed `overscroll-behavior` | `contain` |
+| Computed `position` | `sticky` |
+| Scrolling the panel to its end does not move the page | page `scrollY 0`, panel `scrollTop 1249` |
+| **Control:** without `overscroll-behavior: contain` | **page scrolled to 78** |
+| No payload executed in a real browser | 10 payloads, every surface |
+| No executable markup survived the real parser | — |
+| **Control:** the same payloads unescaped, unassisted | **fired: `EDGIFY-XSS:img`** |
+
+The XSS control is the one jsdom could not give: Chromium fires `img onerror` and `svg onload`
+itself, with no dispatching, so the containment result is measured against a live vector rather
+than a driven one.
+
+**Two bugs in the proof harness itself, which meant it had never actually executed.** Both were
+in the script, not the app: `getByRole("tab", { name: "Graph" })` matched the top bar's
+"Knowledge graph" link as well as the view switcher (Playwright strict mode rejects the
+ambiguity — fixed with `exact: true`), and an SVG `<g>`'s own `<text>` child intercepts pointer
+events so the node click never satisfied actionability (fixed with `force: true`). A written-but-
+unrun proof is worth roughly nothing, and this is the second time in Phase 5 that running
+something for the first time was where the value was.
 
 #### End-to-end timing, live (2026-07-30)
 

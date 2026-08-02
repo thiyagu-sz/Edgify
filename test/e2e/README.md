@@ -39,6 +39,10 @@ everyone else. Clean up with `node --env-file=.env.local test/e2e/seed-session.m
 | `all-formats.mjs` | All eight formats return usable output | yes, 8 |
 | `parse-memory.mjs` | Memory returns to baseline across 200 sequential PDF parses | no |
 
+`graph-proofs.mjs` last run 2026-08-02: **8/8**, with both negative controls firing — the page
+scrolls to 78 without `overscroll-behavior: contain`, and `EDGIFY-XSS:img` fires unassisted when
+the same payloads are rendered unescaped.
+
 ```bash
 node --env-file=.env.local test/e2e/visual-diff.mjs
 node --env-file=.env.local test/e2e/browser-proofs.mjs
