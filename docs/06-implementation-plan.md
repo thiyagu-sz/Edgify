@@ -285,9 +285,29 @@ someone should open one before launch.
       and every run was a best case.** Measured, not gated. See "End-to-end timing" below
 - [x] The same PDF uploaded by a second user returns instantly, zero tokens — 8.0s vs 54–93s,
       ledger `tier: "cache"`, quota unchanged; verified live, not only in the test harness
-- [ ] A scanned PDF produces the honest scanned-document message
-- [ ] An 11 MB file is rejected before the body is read
-- [ ] An encrypted PDF fails with a clear message, not a crash
+- [x] **A scanned PDF produces the honest scanned-document message** — met 2026-08-02, against the
+      running app rather than the unit seam. Fixture: a genuine 3-page PDF containing only
+      graphics, no text operators — what a photocopied handout looks like to an extractor
+      (verified independently: `pages=3, chars=0`). `POST /api/documents/extract` returned
+      `200 {"message":"This looks like a scanned document — Edgify can't read the text yet. Paste
+      the text directly and everything else will work."}` — the docs/04 §7 string verbatim, with
+      no status code, stack or vendor name in the body
+- [x] **An 11 MB file is rejected before the body is read** — met 2026-08-02, and the SECOND half
+      of that sentence is the part that needed proving. An 11 MB upload returns the catalogue
+      message on both `/api/documents/extract` and `/api/documents`, but curl still pushes the
+      whole body, so that alone shows only that the server *answered* — not that it declined to
+      read. Proven separately with a raw socket: headers declaring `Content-Length: 20,971,520`,
+      then **318 body bytes and nothing more**. The server replied
+      `200 {"message":"That file is over the 10 MB limit…"}` in 1.1s without the remaining ~20 MB,
+      so `checkContentLength` decided from the header alone. The second gate (`readCapped`, for a
+      lying Content-Length) is unit-covered in `lib/parse/limits.test.ts`
+- [x] **An encrypted PDF fails with a clear message, not a crash** — met 2026-08-02. Fixture: a
+      real user-password PDF (jsPDF `encryption`), confirmed to raise `PasswordException` from
+      pdf.js before the run. `POST /api/documents/extract` returned
+      `200 {"message":"That PDF is password-protected. Remove the protection, or paste the text."}`
+      — a 200 with a calm message, not a 500. This is the case the `loadingTask.destroy()` note in
+      docs/04 §4 exists for: a `finally` calling the non-existent `proxy.destroy()` would replace
+      the real error with a `TypeError` and turn this into an unrelated crash
 - [x] **Clicking a concept generates detail once and caches it** — met 2026-08-01. Asserted by
       COUNTING requests (`knowledge-graph.detail-cache.test.tsx`), not by "the panel renders":
       three guards, in-memory cache, in-flight set, and the server's stored `detailJson`
