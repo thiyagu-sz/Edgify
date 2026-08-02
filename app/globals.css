@@ -217,8 +217,14 @@ textarea.paste::placeholder { color: var(--muted-soft); }
 .quota-note b { color: var(--ink); font-weight: 600; }
 
 /* ============================================================================
-   KNOWLEDGE GRAPH — ported verbatim from the prototype's `/* KNOWLEDGE GRAPH */` block
+   KNOWLEDGE GRAPH — ported verbatim from the prototype's KNOWLEDGE GRAPH section
    (docs/reference/edgify-prototype.html). Same selectors, same values, same order.
+
+   Do not write a comment delimiter inside this comment. CSS comments DO NOT NEST:
+   an inner close sequence ends the block early, and everything after it — prose,
+   backticks, the trailing rule of dashes — becomes live CSS that the parser then
+   rejects as an invalid selector. That is exactly what happened here, because the
+   heading originally quoted the prototype's own comment markers verbatim.
    ============================================================================ */
 .gbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-md); margin-bottom: var(--sp-lg); flex-wrap: wrap; }
 .legend { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
