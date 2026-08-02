@@ -37,6 +37,10 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      // Browser extensions inject attributes onto <html> (e.g. `data-qb-installed`) before
+      // hydration, so the client tree never matches the server's. Scoped to THIS element only —
+      // it silences attribute mismatches here, not anywhere else in the tree.
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
