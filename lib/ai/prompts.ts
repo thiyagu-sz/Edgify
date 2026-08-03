@@ -8,6 +8,8 @@
  * system prompt states plainly that document content is material to analyse, not instructions.
  */
 
+import { sampleForGraph } from "./sampling";
+
 export const SYSTEM_NOTES =
   "You are Edgify Quick Notes, built for fast revision the night before an exam. Turn the " +
   "source material into SHORT, high-yield notes containing ONLY the most important, most " +
@@ -91,15 +93,38 @@ export const SYSTEM_CONCEPT_DETAIL =
  * spell out (it was parsing free text).
  */
 export function buildGraphPrompt(text: string): { system: string; prompt: string } {
+  /**
+   * SAMPLED, not truncated (lib/ai/sampling.ts). The budget is unchanged — same single call, same
+   * ~9,000 characters, zero cost delta — but they are drawn from across the whole document rather
+   * than all from its opening. Head-truncation showed the model ~3.3 pages regardless of document
+   * length, so a paper that reaches its subject after the background never had its subject read.
+   */
+  const sampled = sampleForGraph(text, GRAPH_TEXT_LIMIT);
+
+  /**
+   * When the document arrives as excerpts, SAY SO. The model is otherwise entitled to read the
+   * seams as continuous prose and invent transitions across them; told that passages are missing,
+   * it treats each excerpt as a fragment of one argument. The markers carry position, so ordering
+   * by document flow is still possible. Only added when sampling actually happened — a short
+   * document is passed through whole and must not be described as excerpted.
+   */
+  const excerpted = sampled.length < text.length;
+  const framing = excerpted
+    ? "The document is given as EXCERPTS from across a single document, separated by markers; " +
+      "passages between them are omitted. Treat them as parts of one work, and identify the " +
+      "concepts the document as a whole teaches.\n"
+    : "";
+
   const prompt =
     "From the document below, identify 6 to 9 key concepts a student must understand for deep " +
     "mastery, and the prerequisite relationships among them.\n" +
+    framing +
     "Each concept needs a short lowercase slug id, a display name, a difficulty of " +
     "Foundational, Intermediate or Advanced, and a one-sentence summary.\n" +
     "Each edge means its `prerequisite` concept must be learned before its `dependent` concept. " +
     "Reference concepts by slug, and only slugs you defined.\n" +
     "Order from foundational to advanced, and give the whole document a short topic title.\n\n" +
-    `<document>\n${text.slice(0, GRAPH_TEXT_LIMIT)}\n</document>`;
+    `<document>\n${sampled}\n</document>`;
   return { system: SYSTEM_GRAPH, prompt };
 }
 

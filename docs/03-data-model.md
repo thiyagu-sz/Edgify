@@ -17,7 +17,7 @@ Uploaded source material. The original file is **never stored** — only its ext
 | `id` | uuid, pk | |
 | `userId` | text, fk → user.id, **not null** | Every query filters on this |
 | `title` | text | Filename, or first heading found |
-| `contentHash` | text, not null | `sha256` of normalised extracted text |
+| `contentHash` | text, not null | `sha256` of normalised extracted text **plus `PROMPT_VERSION`** — see below |
 | `charCount` | integer | |
 | `pageCount` | integer, nullable | PDFs only |
 | `sourceType` | text | `pdf` / `docx` / `txt` / `md` / `paste` |
@@ -25,6 +25,18 @@ Uploaded source material. The original file is **never stored** — only its ext
 | `createdAt` | timestamptz, default now | |
 
 Indexes: `(userId, createdAt desc)`, `(contentHash)`
+
+> **`contentHash` is version-scoped, not a pure content address.** Corrected 2026-08-02 with the
+> graph sampling fix. Bumping `PROMPT_VERSION` invalidates `generation_cache`, so nobody is served
+> a stale model *result* — but the clone path (W4 step 8) never reads that cache. It matches
+> documents by hash and copies an existing graph's rows wholesale, so a graph built under the old
+> head-truncation would keep being cloned to new users indefinitely.
+>
+> That failure lands exactly on the case the clone exists for: one student uploads a lecture PDF
+> and nine more get it free. Without the version in the hash, student one would get the corrected
+> graph and students two through ten a clone of the stale primer — the fix reaching only the first
+> uploader, silently. The cost is that a `PROMPT_VERSION` bump now also re-builds graphs for
+> already-uploaded documents, which is what a change to the model's input should do.
 
 ### `graphs`
 One knowledge graph per document.

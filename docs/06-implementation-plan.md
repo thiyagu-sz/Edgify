@@ -543,6 +543,77 @@ events so the node click never satisfied actionability (fixed with `force: true`
 unrun proof is worth roughly nothing, and this is the second time in Phase 5 that running
 something for the first time was where the value was.
 
+#### Graph content sampling (2026-08-02) — the model now reads the whole document
+
+**The defect.** `buildGraphPrompt` fed the model `text.slice(0, 9000)`. Measured on a real 10-page
+PDF: **27,592 chars extracted, 9,000 fed — 32.6%, ~3.3 of 10 pages.** The pages seen are CONSTANT,
+so a 30-page paper got ~11% and a 100-page textbook the same 3.3 pages. Uploading "Pathophysiology
+of Hypertension" therefore produced `Human Cell · Blood Composition · Heart Anatomy · Blood Vessel
+Structure` — a cardiovascular primer, because the mechanisms start after the background.
+
+**Attribution, before any code was written.** Neither reasoning nor prompting was at fault. Feeding
+the same prompt the mechanism section returned the right graph (RAAS, baroreceptors, peripheral
+resistance); rewording the prompt while keeping head-truncation changed nothing. The model was
+faithfully summarising the only text it was given.
+
+**The fix** (`lib/ai/sampling.ts`) spends the SAME 9,000-character budget on excerpts from across
+the document. One call, same input size, **zero cost delta** — what changes is *which* 9,000
+characters. Heading-aware when structure is detectable, evenly-spaced windows otherwise.
+
+**Heading detection had to be got right, and the first attempt was wrong.** "A short line is a
+heading" matched **302 of 491 lines** on a real PDF, because extraction breaks text at visual
+wraps rather than paragraphs. Numbered and ALL-CAPS forms matched **27 lines, every one genuine**
+(`1. INTRODUCTION`, `3.1 Databases and Sources Searched`). Precision matters more than recall
+here: a false heading splits a section mid-argument, which is the incoherence the design exists to
+prevent.
+
+**The coherence lever is stride, not window size — and that reverses the intuitive answer.** The
+first draft used few, large windows on the theory that bigger excerpts read better. What actually
+decides whether a topic is seen is the distance between window starts: a block is missed entirely
+unless a window begins inside it, so coverage needs `stride <= topic block size`. Six windows over
+a 20,000-character five-topic paper gave a stride of ~3,500 against ~1,850-character blocks and
+dropped the sodium-handling section — twice, at two different window counts, before it was reasoned
+through instead of tuned. Twelve windows at the 600-character coherence floor give a stride of
+~1,660 and reach every topic. The floor is what stops this degenerating: 600 characters is three
+or four sentences, still enough to contain a relation between two concepts.
+
+**Live result**, same fixture, free-tier model:
+
+| | Concepts | Edges |
+|---|---|---|
+| Before | Human Cell · Cell Membrane · Blood Composition · Haematocrit · Heart Anatomy · Cardiac Function | 5 |
+| After (3 runs) | …· **RAAS** · **Baroreceptor Reflex** · **Renal Pressure Natriuresis** · **Endothelial Dysfunction** | 7 |
+
+All three sampled runs reached the mechanisms; none of the head-truncated runs did. **Peripheral
+resistance is consistently named "Arterial Pressure Regulation" / "Mean Arterial Pressure
+Regulation" rather than by that phrase** — the source sentence *is* in the sample (pinned by the
+pure test), so this is the model's naming choice, not a coverage gap.
+
+**Edges went UP, 5 → 7, contradicting the prediction.** The stated risk was that stitching
+non-contiguous excerpts would yield fewer prerequisite edges. On this fixture it did not. n=3 on
+one document, so it is a measurement rather than a general claim — but the concern did not
+materialise and is recorded as such rather than quietly dropped.
+
+**`PROMPT_VERSION` v1 → v2**, invalidating the whole generation cache, and `contentHash` now folds
+the version in so pre-fix graphs are not cloned to post-fix users (docs/03).
+
+**TRACKED — `CONCEPT_DETAIL_TEXT_LIMIT = 7000` has the identical defect, and this fix makes it
+WORSE.** Blocker-adjacent, not yet built.
+
+Concept detail truncates the same way: **25.4% of a 10-page document grounds every explanation.**
+Before this change the two defects were consistent — a primer graph explained from primer text.
+After it they diverge: the graph now builds a RAAS node, but clicking it generates the explanation
+from the first 7,000 characters, which for the hypertension paper is cell biology. **The result is
+a correct-looking graph with mismatched explanations, which reads worse than the honest primer it
+replaced** — the user is told the document teaches RAAS and then shown an account of cell membranes
+under that heading.
+
+Its fix is NOT the sampler. Concept detail should select the passages RELEVANT TO THE CLICKED
+CONCEPT — retrieval keyed on the concept name and slug — rather than sample the document evenly.
+Even sampling would ground each concept in a little of everything, which is the wrong shape for a
+per-concept explanation. This is the natural follow-up to the sampling fix and should be taken
+before the graph is shown to real users.
+
 #### End-to-end timing, live (2026-07-30)
 
 First full exercise of the ingestion path against the real stack: production build, real Neon,

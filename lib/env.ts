@@ -90,7 +90,7 @@ const envSchema = z.object({
   OPENROUTER_FREE_FALLBACKS: z.string().default("inclusionai/ling-3.0-flash:free"),
   OPENROUTER_PAID_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
   // Bump to invalidate the generation cache when prompt templates change (docs/08 §prompts).
-  PROMPT_VERSION: z.string().min(1).default("v1"),
+  PROMPT_VERSION: z.string().min(1).default("v2"),
 
   NODE_ENV: z
     .enum(["development", "production", "test"])

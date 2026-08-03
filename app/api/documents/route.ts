@@ -72,7 +72,9 @@ async function handler(request: Request): Promise<Response> {
 
   // Step 7: the content address. Normalised before hashing, sharing `normalizeText` with the
   // generation cache so both agree on what "the same document" means.
-  const hash = contentHash(extracted.text);
+  // Version-scoped (lib/cache.ts): a document uploaded before the sampling fix hashes
+  // differently now, so its head-only graph is never cloned to a post-fix uploader.
+  const hash = contentHash(extracted.text, env.PROMPT_VERSION);
 
   // Step 9 (moved ahead of step 8 — see the note above).
   const document = await createDocument(userId, {

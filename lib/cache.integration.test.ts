@@ -143,12 +143,14 @@ describe("cache store: concurrent inserts on one key", () => {
 });
 
 describe("contentHash", () => {
+  const V = "v2";
+
   it("is stable across whitespace differences, so re-exports of one document dedupe", () => {
-    expect(contentHash("Lecture  one.\n\nIntro.")).toBe(contentHash("Lecture one. Intro."));
+    expect(contentHash("Lecture  one.\n\nIntro.", V)).toBe(contentHash("Lecture one. Intro.", V));
   });
 
   it("differs for different documents", () => {
-    expect(contentHash("Lecture one")).not.toBe(contentHash("Lecture two"));
+    expect(contentHash("Lecture one", V)).not.toBe(contentHash("Lecture two", V));
   });
 
   it("shares normalisation with cacheKey, so the clone path and the cache agree", () => {
@@ -156,7 +158,30 @@ describe("contentHash", () => {
     // the classroom case would half-work with nothing reporting it.
     const spaced = "a   b\n\nc";
     const tight = "a b c";
-    expect(contentHash(spaced)).toBe(contentHash(tight));
-    expect(cacheKey(spaced, "key_points", "v1")).toBe(cacheKey(tight, "key_points", "v1"));
+    expect(contentHash(spaced, V)).toBe(contentHash(tight, V));
+    expect(cacheKey(spaced, "key_points", V)).toBe(cacheKey(tight, "key_points", V));
+  });
+
+  /**
+   * The rollout property, and the whole reason the version is in this hash.
+   *
+   * Bumping `PROMPT_VERSION` invalidates `generation_cache`, so no stale MODEL RESULT is served —
+   * but the clone path never reads that cache. It matches documents by hash and copies an existing
+   * graph's rows wholesale, so a graph built under the old head-truncation would keep reaching new
+   * users forever.
+   *
+   * That failure lands precisely on the case the clone exists for: one student uploads a lecture
+   * PDF and nine more get it for free. Without this, student one would get the corrected graph and
+   * students two through ten a clone of the stale cell-biology primer — the fix reaching only the
+   * first uploader, silently.
+   */
+  it("changes with the prompt version, so pre-fix graphs are not cloned after the fix", () => {
+    const document = "The same lecture, byte for byte.";
+    expect(contentHash(document, "v1")).not.toBe(contentHash(document, "v2"));
+  });
+
+  it("still matches between two users on the same version — the classroom case keeps working", () => {
+    const document = "One lecture PDF, uploaded by two students.";
+    expect(contentHash(document, V)).toBe(contentHash(document, V));
   });
 });

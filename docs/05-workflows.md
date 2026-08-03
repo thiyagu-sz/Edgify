@@ -99,7 +99,8 @@ Upload document in Graph mode
   │
   └─ POST /api/documents
                                       1–6. As W3 (validate, extract, discard file)
-                                      7. contentHash = sha256(normalised text)
+                                      7. contentHash = sha256(normalised text
+                                         + PROMPT_VERSION) — see docs/03
                                       8. Insert document + text
                                       9. Existing READY graph with this hash?
                                          YES → clone concepts + edges for this
@@ -116,7 +117,11 @@ Upload document in Graph mode
                                      12. Session + ownership check; idempotent —
                                          only proceeds while status = "processing"
                                      13. lib/ai/generate → structure extraction
-                                         (6–9 concepts + prerequisite edges)
+                                         (6–9 concepts + prerequisite edges).
+                                         The prompt carries ~9,000 chars SAMPLED
+                                         from across the document, not its first
+                                         9,000 (lib/ai/sampling.ts) — same budget,
+                                         same single call, zero cost delta
                                      14. Zod validate; repair once; drop dangling
                                          edges; break cycles
                                      15. Compute layer-based layout, store x/y/w

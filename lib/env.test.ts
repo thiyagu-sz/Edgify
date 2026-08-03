@@ -112,7 +112,9 @@ describe("Phase 3 AI-layer vars", () => {
     const fallbacks = env.OPENROUTER_FREE_FALLBACKS.split(",").filter(Boolean);
     expect(fallbacks.length).toBeGreaterThan(0);
     expect(fallbacks.every((id) => id.endsWith(":free"))).toBe(true);
-    expect(env.PROMPT_VERSION).toBe("v1");
+    // v1 → v2 with the graph sampling fix (2026-08-02). The model's input changed, so every
+    // result cached under the old input had to be invalidated; that is what this default is for.
+    expect(env.PROMPT_VERSION).toBe("v2");
   });
 });
 
