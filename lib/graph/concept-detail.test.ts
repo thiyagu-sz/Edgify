@@ -85,6 +85,10 @@ describe("generating a detail", () => {
       operation: "concept_detail",
       conceptSlug: "calc",
       conceptName: "Calculus",
+      // The summary is passed as retrieval query material (lib/ai/retrieval.ts). It was written to
+      // the database by the structure pass and, until concept detail became retrieval-grounded,
+      // never read back.
+      conceptSummary: "A short summary from the structure pass.",
       text: "The document text.",
     });
   });

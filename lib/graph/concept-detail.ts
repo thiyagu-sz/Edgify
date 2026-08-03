@@ -74,6 +74,8 @@ export async function getOrCreateConceptDetail(
       operation: "concept_detail",
       conceptSlug: concept.slug,
       conceptName: concept.name,
+      // Query material for passage retrieval — see lib/ai/retrieval.ts.
+      conceptSummary: concept.summary,
       text: document.extractedText,
     });
   } catch (error) {

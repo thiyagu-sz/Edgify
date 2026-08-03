@@ -597,22 +597,44 @@ materialise and is recorded as such rather than quietly dropped.
 **`PROMPT_VERSION` v1 → v2**, invalidating the whole generation cache, and `contentHash` now folds
 the version in so pre-fix graphs are not cloned to post-fix users (docs/03).
 
-**TRACKED — `CONCEPT_DETAIL_TEXT_LIMIT = 7000` has the identical defect, and this fix makes it
-WORSE.** Blocker-adjacent, not yet built.
+**FIXED (2026-08-02) — `CONCEPT_DETAIL_TEXT_LIMIT = 7000` grounded every concept in the same
+opening text.** Tracked as blocker-adjacent when the sampler landed; closed the same day.
 
-Concept detail truncates the same way: **25.4% of a 10-page document grounds every explanation.**
-Before this change the two defects were consistent — a primer graph explained from primer text.
-After it they diverge: the graph now builds a RAAS node, but clicking it generates the explanation
-from the first 7,000 characters, which for the hypertension paper is cell biology. **The result is
-a correct-looking graph with mismatched explanations, which reads worse than the honest primer it
-replaced** — the user is told the document teaches RAAS and then shown an account of cell membranes
-under that heading.
+Concept detail truncated identically: **25.4% of a 10-page document grounded every explanation**,
+so whichever node the user clicked, the model read the beginning of the paper.
 
-Its fix is NOT the sampler. Concept detail should select the passages RELEVANT TO THE CLICKED
-CONCEPT — retrieval keyed on the concept name and slug — rather than sample the document evenly.
-Even sampling would ground each concept in a little of everything, which is the wrong shape for a
-per-concept explanation. This is the natural follow-up to the sampling fix and should be taken
-before the graph is shown to real users.
+`lib/ai/retrieval.ts` selects the passages ABOUT THE CLICKED CONCEPT instead — same 7,000-character
+budget, same single call, zero cost delta. Keyword scoring over sentence-aligned passages, query
+built from the concept's name, slug and its `summary` (written by the structure pass and, until
+now, never read back). Term frequency saturates so a passage cannot win by repeating the concept
+name; passages are chosen by relevance and then **re-ordered by document position**, or the
+explanation reads as a shuffled argument. No embeddings, no new dependency, no second model call.
+
+**The sampler was the wrong tool for this and was deliberately not reused**: sampling spreads the
+budget evenly, which would ground every concept in a little of everything. Breadth is right for
+describing a whole document and wrong for explaining one concept. It remains the FALLBACK for a
+concept that matches nothing — an abbreviation or a paraphrase — since even representative coverage
+beats reading the opening.
+
+**A PREDICTION THIS DOCUMENT GOT WRONG, corrected rather than quietly dropped.** The tracked entry
+claimed the graph would "build a RAAS node whose explanation is generated from cell biology,
+reading worse than the honest primer". Measured against the free model, that is NOT what happened:
+head-truncated grounding still produced a competent RAAS definition, because the model supplies
+what it knows from training when the document does not support the answer.
+
+The real defect is subtler and still worth fixing. Before, the explanation was **generic textbook
+knowledge** — "regulates blood pressure and fluid balance… a feedback mechanism where a decrease
+in blood pressure or sodium levels triggers…". After, it is **the document's own account** —
+"regulates arterial pressure over a timescale of hours to days… via angiotensin I and ACE", which
+is the source text's phrasing. The product promises a *document-grounded* explanation and the panel
+says so while loading; it was delivering a generic one that happened to be about the right topic.
+That is a quieter failure than predicted and a harder one to notice, which is an argument for the
+fix rather than against it — but the original claim overstated the symptom and is corrected here.
+
+**Cache invalidation is scoped to concept details only.** The discriminator carries a retrieval
+version (`concept_detail:r2:<slug>`) rather than bumping `PROMPT_VERSION` again: a global bump
+would also change `contentHash` and force a second full rebuild of every graph, hours after the
+sampling fix rebuilt them all, for a change that does not affect graphs.
 
 #### End-to-end timing, live (2026-07-30)
 

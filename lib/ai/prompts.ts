@@ -8,6 +8,7 @@
  * system prompt states plainly that document content is material to analyse, not instructions.
  */
 
+import { retrieveForConcept, type ConceptQuery } from "./retrieval";
 import { sampleForGraph } from "./sampling";
 
 export const SYSTEM_NOTES =
@@ -139,16 +140,35 @@ export function buildGraphPrompt(text: string): { system: string; prompt: string
  * next call. Same treatment as the document itself (docs/09 §2.3).
  */
 export function buildConceptDetailPrompt(
-  conceptName: string,
+  concept: ConceptQuery,
   documentText: string,
 ): { system: string; prompt: string } {
+  /**
+   * RETRIEVED, not truncated (lib/ai/retrieval.ts). Same 7,000-character budget, same single call,
+   * zero cost delta — but the passages are the ones ABOUT THIS CONCEPT rather than the document's
+   * opening. Grounding every concept in the same first 7,000 characters is what produced a graph
+   * that correctly named RAAS and then explained it using cell membranes.
+   */
+  const grounding = retrieveForConcept(documentText, concept, CONCEPT_DETAIL_TEXT_LIMIT);
+
+  /**
+   * The passages are labelled and non-contiguous, so say so — the same reasoning as the graph
+   * prompt. Only when retrieval actually selected: a short document is passed through whole.
+   */
+  const framing =
+    grounding.length < documentText.length
+      ? "The document is given as PASSAGES selected for this concept, separated by markers; " +
+        "text between them is omitted. Ground the explanation in them.\n"
+      : "";
+
   const prompt =
     "Explain the concept named inside the <concept> tags for deep understanding, grounded in the " +
     "document below.\n" +
+    framing +
     "Give a precise 2-3 sentence definition with the intuition, one concrete worked example, one " +
     "understanding-check question with four options (`answer` is the 0-based index of the correct " +
     "one) and a one-line explanation of why it is right, and two flashcards.\n\n" +
-    `<concept>\n${conceptName.slice(0, CONCEPT_NAME_LIMIT)}\n</concept>\n\n` +
-    `<document>\n${documentText.slice(0, CONCEPT_DETAIL_TEXT_LIMIT)}\n</document>`;
+    `<concept>\n${concept.name.slice(0, CONCEPT_NAME_LIMIT)}\n</concept>\n\n` +
+    `<document>\n${grounding}\n</document>`;
   return { system: SYSTEM_CONCEPT_DETAIL, prompt };
 }

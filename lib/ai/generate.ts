@@ -86,6 +86,12 @@ export type ConceptDetailInput = {
   /** Stable id within the graph — REQUIRED in the cache key; see `cacheDiscriminator`. */
   conceptSlug: string;
   conceptName: string;
+  /**
+   * The one-sentence description the structure pass produced. Used to RETRIEVE the passages this
+   * concept is explained from (lib/ai/retrieval.ts) — it is the strongest query material available
+   * and was previously written to the database and never read.
+   */
+  conceptSummary?: string | null;
   /** The document text, as grounding. Identical for every concept in one graph. */
   text: string;
 };
@@ -124,7 +130,14 @@ export function cacheDiscriminator(input: GenerateInput): string {
     case "graph_structure":
       return "graph_structure";
     case "concept_detail":
-      return `concept_detail:${input.conceptSlug}`;
+      /**
+       * `r2` is the RETRIEVAL version. Concept detail is now grounded in passages selected for the
+       * concept rather than the document's first 7,000 characters, so entries cached under the old
+       * grounding must not be served — but bumping `PROMPT_VERSION` for that would also change
+       * `contentHash` and force a second full rebuild of every graph, hours after the sampling fix
+       * rebuilt them all. Versioning the discriminator invalidates concept details ONLY.
+       */
+      return `concept_detail:r2:${input.conceptSlug}`;
   }
 }
 
@@ -161,7 +174,10 @@ function planGeneration(input: GenerateInput): GenerationPlan | null {
     return { system, prompt, schema: graphSchema, validate: sanitizeGraph };
   }
 
-  const { system, prompt } = buildConceptDetailPrompt(input.conceptName, input.text);
+  const { system, prompt } = buildConceptDetailPrompt(
+    { name: input.conceptName, slug: input.conceptSlug, summary: input.conceptSummary },
+    input.text,
+  );
   return {
     system,
     prompt,

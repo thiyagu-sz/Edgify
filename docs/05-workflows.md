@@ -186,8 +186,11 @@ Click a node in the graph
   │                                  1. Session + ownership check
   │                                  2. Quota check
   │                                  3. lib/ai/generate → definition,
-  │                                     example, quiz, flashcards
-  │                                     (document text as grounding)
+  │                                     example, quiz, flashcards, grounded in
+  │                                     the passages RETRIEVED for this concept
+  │                                     (lib/ai/retrieval.ts) — not the document's
+  │                                     first 7,000 chars, which grounded every
+  │                                     concept in the same opening text
   │                                  4. Validate, persist detailJson
   │                                  5. Return
   │          → render, no further cost on revisit

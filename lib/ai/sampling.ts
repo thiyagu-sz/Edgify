@@ -124,7 +124,7 @@ export function detectHeadings(text: string): DetectedHeading[] {
 }
 
 /** The index just after the first sentence end at or after `from`, or `from` if there is none. */
-function sentenceStartAtOrAfter(text: string, from: number, slack = SNAP_SLACK): number {
+export function sentenceStartAtOrAfter(text: string, from: number, slack = SNAP_SLACK): number {
   const window = text.slice(from, from + slack);
   const match = /[.!?]\s/.exec(window);
   if (match) return from + match.index + match[0].length;
@@ -133,7 +133,7 @@ function sentenceStartAtOrAfter(text: string, from: number, slack = SNAP_SLACK):
 }
 
 /** The index just after the last sentence end at or before `to`, or `to` if there is none. */
-function sentenceEndAtOrBefore(text: string, to: number, slack = SNAP_SLACK): number {
+export function sentenceEndAtOrBefore(text: string, to: number, slack = SNAP_SLACK): number {
   const start = Math.max(0, to - slack);
   const window = text.slice(start, to);
   const matches = [...window.matchAll(/[.!?]\s/g)];
