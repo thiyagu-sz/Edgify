@@ -151,12 +151,26 @@ describe("exportPdf — text only, never markup", () => {
     expect(openAction).not.toContain("/S");
   });
 
+  /**
+   * CHANGED 2026-08-02 with the block-model renderer, and the reason is the improvement itself.
+   *
+   * This used to assert the raw stream contained the contiguous string `"bold item"`. That held
+   * only while the whole line was drawn in ONE `doc.text()` call — i.e. while `**bold**` was
+   * flattened to plain text. Inline bold is now genuinely bold, so "bold" and " item" are separate
+   * `Tj` operators in different fonts and the contiguous bytes are gone even though the page reads
+   * correctly. Byte-grepping cannot express "the visible line reads 'bold item'".
+   *
+   * The extraction-based assertions, which ask what a reader and Ctrl-F actually get, live in
+   * lib/pdf/render.test.ts. What stays here is the property this file is about: no markdown
+   * syntax reaches the page.
+   */
   it("renders headings and bullets as text, stripping markdown syntax", () => {
     const raw = pdfBytes("Edgify — Key Points", "# Heading\n\n- **bold** item");
     expect(raw).toContain("Heading");
-    expect(raw).toContain("bold item");
-    // The `**` markers are stripped before the text reaches the page.
+    expect(raw).toContain("bold");
+    expect(raw).toContain("item");
     expect(raw).not.toContain("**bold**");
+    expect(raw).not.toContain("# Heading");
   });
 
   it("does not throw on any payload in the corpus", () => {

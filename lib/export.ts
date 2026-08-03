@@ -1,10 +1,14 @@
 import { jsPDF } from "jspdf";
+import { renderBlocks } from "./pdf/render";
 import { escapeAttribute, renderMarkdown } from "./sanitize";
 
 /**
- * Client-side export, ported from docs/reference/edgify-prototype.html (W7, docs/05). No server
- * cost, no failure mode. PDF via jsPDF (walks the markdown line by line as plain text — no HTML
- * is ever executed); DOC via a Word-compatible HTML blob downloaded as `.doc`.
+ * Client-side export (W7, docs/05). No server cost, no failure mode.
+ *
+ * PDF via jsPDF, laid out from a BLOCK MODEL (`lib/pdf`) rather than line by line — see the note
+ * on `exportPdf`. DOC via a Word-compatible HTML blob downloaded as `.doc`, rendered through the
+ * same sanitiser as the on-screen prose. Neither path executes HTML, and neither emits a link
+ * annotation: `[text](url)` renders as its label only.
  */
 
 function slug(s: string): string {
@@ -52,46 +56,28 @@ export function exportDoc(title: string, markdown: string): void {
   downloadBlob(new Blob([html], { type: "application/msword" }), slug(title) + ".doc");
 }
 
+/**
+ * Markdown → PDF, via the block model in `lib/pdf` (W7).
+ *
+ * REPLACED 2026-08-02. The previous implementation walked `markdown.split("\n")` and called
+ * `doc.text()` at a manually-advanced `y`. Measured defects on a realistic study guide: tables
+ * printed as literal `|` pipes (with `|---|---|` as body text), `####` headings kept their
+ * hashes, code fences printed verbatim, `[text](url)` printed raw, and a global `_` strip
+ * corrupted `renal_artery_stenosis` into `renalarterystenosis`.
+ *
+ * Those are not tuning problems. A renderer that sees one line at a time cannot express
+ * "keep this heading with its paragraph", "never split this table row" or "this bold run sits
+ * inside that sentence" — they are properties of blocks, and there were no blocks. Parsing is now
+ * separate from placement: `lib/pdf/blocks.ts` decides what the content is, `lib/pdf/render.ts`
+ * decides where it goes.
+ *
+ * Still client-side, still free, still VECTOR text — selectable, searchable, tens of KB. The
+ * headless-browser and `jsPDF.html()` routes were both rejected: the first stops being free and
+ * adds a renderer with far more privilege, the second rasterises and would cost selectability.
+ */
 export function exportPdf(title: string, markdown: string): void {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const M = 48,
-    PW = doc.internal.pageSize.getWidth(),
-    PH = doc.internal.pageSize.getHeight(),
-    W = PW - M * 2;
-  let y = M;
-  function put(text: string, size: number, style: string, indent: number, gap: number) {
-    doc.setFont("helvetica", style);
-    doc.setFontSize(size);
-    const lines: string[] = doc.splitTextToSize(text, W - indent);
-    lines.forEach((l) => {
-      if (y > PH - M) {
-        doc.addPage();
-        y = M;
-      }
-      doc.text(l, M + indent, y);
-      y += size + 3;
-    });
-    y += gap;
-  }
-  put(title, 18, "bold", 0, 12);
-  markdown.split("\n").forEach((raw) => {
-    const t = raw.replace(/\s+$/, "");
-    if (!t.trim()) {
-      y += 4;
-      return;
-    }
-    const clean = t
-      .replace(/\*\*/g, "")
-      .replace(/^\s*[-*]\s+/, "")
-      .replace(/^\s*\d+\.\s+/, "")
-      .replace(/_/g, "");
-    if (t.startsWith("### ")) put(t.slice(4).replace(/\*\*/g, ""), 12.5, "bold", 0, 4);
-    else if (t.startsWith("## ")) put(t.slice(3).replace(/\*\*/g, ""), 14.5, "bold", 0, 5);
-    else if (t.startsWith("# ")) put(t.slice(2).replace(/\*\*/g, ""), 16, "bold", 0, 6);
-    else if (/^\s*[-*]\s+/.test(t)) put("•  " + clean, 11, "normal", 16, 2);
-    else if (/^\s*\d+\.\s+/.test(t)) put(clean, 11, "normal", 16, 2);
-    else put(clean, 11, "normal", 0, 4);
-  });
+  renderBlocks(doc, title, markdown);
   doc.save(slug(title) + ".pdf");
 }
 
