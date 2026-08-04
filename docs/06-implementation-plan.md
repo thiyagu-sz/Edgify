@@ -30,12 +30,33 @@ Prove the riskiest integrations before building anything on top of them.
 - Dockerfile with `output: "standalone"`; runs locally
 
 **Acceptance criteria**
-- [ ] `npm run build` succeeds; the Docker image runs locally
-- [ ] Sign in with Google, refresh, session persists
-- [ ] Sign out clears the session
-- [ ] Removing a required env var stops the app at boot with a clear message
-- [ ] Database query works after Neon has idled 10+ minutes (cold start retry proven)
-- [ ] `npm run typecheck` and `npm run lint` pass
+*Reconciled 2026-08-04 — evidence matched to boxes, no features built. Ticked only where evidence
+exists; everything still unchecked below is UNVERIFIED (never run) rather than known-broken.
+Nothing was found broken.*
+
+- [ ] `npm run build` succeeds; **the Docker image runs locally** — build half MET (2026-08-04,
+      `Compiled successfully`); the **Docker half is UNVERIFIED**. The Dockerfile exists with
+      `output: "standalone"` and build-time env placeholders, but there is no record anywhere of
+      the image being built and run
+- [ ] Sign in with Google, refresh, session persists — **UNVERIFIED.** No test covers the OAuth
+      round trip; `test/e2e/seed-session.mjs` *injects* a session directly and bypasses Google, so
+      it proves the session cookie works, not that sign-in does. All of docs/09 §2.1 is unchecked
+- [ ] Sign out clears the session — **UNVERIFIED.** `components/sign-out-button.tsx` exists and is
+      wired; nothing asserts the session is invalidated **server-side** rather than just cleared in
+      the client (docs/09 §2.1 names that distinction and is unchecked)
+- [ ] Removing a required env var stops the app at boot with a clear message — **UNVERIFIED, and
+      half of it is proven false-adjacent.** `lib/env.test.ts` confirms `parseEnv` throws naming
+      every offending variable, with the message "Invalid environment configuration. The app cannot
+      start." So the MESSAGE is good. But `env` is a lazy `Proxy` (`lib/env.ts`) whose own comment
+      says "the first property read triggers validation" — so validation fires on first *access*,
+      not at import, and no test exercises server startup at all. On Cloud Run that is the
+      difference between a container that refuses to boot and one that boots green, passes its
+      health check, and 500s on the first real request. Worth settling before Phase 7 deploys
+- [ ] Database query works after Neon has idled 10+ minutes (cold start retry proven) —
+      **UNVERIFIED, and already recorded as such:** docs/09 §3.1 lists "Neon cold start" under
+      *"Not yet exercised (deferred)"*. The retry path exists (`RETRIABLE_CODES` + the wrapper in
+      `lib/db/client.ts`) and is unit-covered, but a genuine 10-minute idle has never been run
+- [x] **`npm run typecheck` and `npm run lint` pass** — met 2026-08-04, both exit 0 with no output
 
 > Prototype the Better Auth flow **first**, before anything depends on it. It is the least
 > proven piece of the stack. If it fights you for more than a day, switching to Supabase Auth
@@ -105,9 +126,22 @@ Unglamorous, early, and the reason nothing catches fire later.
       `innovationmate` and nothing else. If Phase 7 deploys to a different project, the guardrail
       must be rebuilt and re-drilled there; "a cap exists somewhere" is not the gate. Also gated
       at launch by docs/09.
-- [ ] Isolation test: user A's document is invisible to user B through **every** query function
-- [ ] Quota increments, enforces at the limit, and resets at day boundary
-- [ ] An unauthenticated route rejects a burst of requests
+- [x] **Isolation test: user A's document is invisible to user B through *every* query function** —
+      met, reconciled 2026-08-04. `lib/db/queries/isolation.integration.test.ts` carries a case per
+      function across documents, notes, ledger, graphs, concepts and edges, and — this is what makes
+      *every* true rather than *the ones someone remembered* — a **coverage guard** asserting that
+      every exported query function either has an isolation case or is explicitly allowlisted.
+      Reinforced by `architecture.test.ts` (no DB access outside the query layer) and by the
+      recorded mutation drill: deleting the `EXISTS` predicate from `listConcepts` turned three
+      tests red, each showing user B reading A's rows
+- [x] **Quota increments, enforces at the limit, and resets at day boundary** — met, reconciled
+      2026-08-04. `lib/quota.integration.test.ts`: 1:1 increment up to the limit, enforcement at the
+      limit with nothing stored beyond it, a fresh allowance at the UTC day boundary, and no lost
+      update or overshoot under concurrent requests. `lib/quota.test.ts` pins the UTC rollover
+      itself (23:30Z and 00:30Z land in different days)
+- [x] **An unauthenticated route rejects a burst of requests** — met, reconciled 2026-08-04.
+      `lib/rate-limit.integration.test.ts` returns a calm 429 on a burst, isolated per IP, and
+      `app/api/rate-limit-coverage.test.ts` pins which routes are wrapped
 - [x] **`/api/notes/generate` and `/api/usage` reject a burst of unauthenticated requests** — met
       2026-07-29. Both wrapped; `app/api/rate-limit-coverage.test.ts` asserts the rejection happens
       **before the session lookup** (`getSession` never called), which is the property that
@@ -115,7 +149,11 @@ Unglamorous, early, and the reason nothing catches fire later.
 - [x] **`checkRateLimit` issues one round trip per request, not two** — met 2026-07-29. Asserted as
       a statement count via `test/count-queries.ts`, not wall-clock time, so it holds identically
       against a localhost container and a remote Neon instance
-- [ ] Sentry receives a deliberately thrown test error
+- [ ] Sentry receives a deliberately thrown test error — **UNVERIFIED, and the existing test does
+      not touch it.** `lib/log.test.ts` **mocks** `@sentry/nextjs` and asserts `captureException`
+      was called with the right shape. That proves *our* side of the contract — we call Sentry —
+      and nothing about delivery. `SENTRY_DSN` ships blank in `.env.example`, so no event has ever
+      left the process. The criterion says *receives*, and receiving is the half that is untested
 
 > Billing caps before the code that can spend money. The failure mode this prevents is a
 > retry loop at 3am against a paid API.
@@ -139,13 +177,32 @@ The heart of the system. Build it once, properly.
 - `usage_ledger` writes on every call
 
 **Acceptance criteria**
-- [ ] Identical input twice → second is a cache hit, zero tokens, no quota consumed
-- [ ] Forcing a 429 (bad free model id) falls through to the paid model, invisibly
-- [ ] Forcing both to fail returns demo content with the banner
-- [ ] Forcing demo to be unavailable returns the busy message, not an exception
-- [ ] Malformed JSON triggers exactly one repair attempt, then falls through
-- [ ] Every path writes a ledger row with the correct `tier` and `outcome`
-- [ ] Retries are jittered — verified by inspecting timing in logs
+*Reconciled 2026-08-04. `lib/ai/generate.integration.test.ts` labels its cases **AC1–AC7** against
+this list, so six of the seven map one-to-one. **There is no AC6** — see the ledger row below.*
+
+- [x] **Identical input twice → second is a cache hit, zero tokens, no quota consumed** — met
+      (AC1). Corroborated by `lib/cache.integration.test.ts` and by the graph clone path in
+      `app/api/graph/graph-build.integration.test.ts`, which asserts zero model calls, an untouched
+      quota and a `tier: "cache"` ledger row
+- [x] **Forcing a 429 (bad free model id) falls through to the paid model, invisibly** — met (AC2)
+- [x] **Forcing both to fail returns demo content with the banner** — met (AC3), and this one has
+      evidence beyond the harness: docs/09 §3.1 records a run against a **production build** with
+      every model id broken for real — demo content plus a visible banner in 4.7s, exports and
+      regenerate still live, and zero browser requests to the provider
+- [x] **Forcing demo to be unavailable returns the busy message, not an exception** — met (AC4)
+- [x] **Malformed JSON triggers exactly one repair attempt, then falls through** — met (AC5)
+- [ ] Every path writes a ledger row with the correct `tier` and `outcome` — **UNVERIFIED, and the
+      gap is structural: the AC numbering skips 6.** The ladder suite runs AC1–AC5 and AC7; nothing
+      asserts this. Coverage exists only in patches — `graph-build.integration.test.ts` checks
+      `tier: "cache"` / `outcome: "ok"` on the clone path and a free/paid row on the build path,
+      while the route tests assert the *response* tier, which is a different thing from a persisted
+      row. The **demo and error outcomes are unasserted anywhere**, which is the half that matters:
+      those are the paths that fire when something is wrong, and the ledger is how the cost
+      dashboard and any post-incident question get answered. docs/09 §3.1 carries the same claim,
+      also unchecked
+- [x] **Retries are jittered** — met (AC7), and by a better method than the criterion asks for:
+      it asserts the delay's composition (`base + random component`) directly rather than eyeballing
+      timings in logs, so it cannot pass on a coincidence
 
 > Test the ladder by breaking things on purpose. Point the free model at a nonexistent id.
 > Use an invalid key. Return garbage from a stubbed model. Every one of these must produce a
