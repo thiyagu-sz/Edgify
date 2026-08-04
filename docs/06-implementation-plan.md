@@ -802,6 +802,35 @@ so neither seam can regress.
 
 ## Phase 7 — Deploy and verify (2–3 days)
 
+> **Target project: `innovationmate`. Decided and verified 2026-08-04.**
+>
+> Not `edgify-prod` — that name has never existed as a GCP project, and a `gcloud projects list`
+> on 2026-08-04 showed ten projects with nothing edgify-named among them. It came from the
+> Trellis→Edgify rename, which touched the documents and not the infrastructure; the live budget
+> is still called `trellis-hard-cap`.
+>
+> **The decision turns on one asymmetry: Drill B is destructive and must happen before real
+> traffic.** `innovationmate` was drilled end to end while it was empty and spending $0 — the
+> cheapest moment that will ever exist, and it has passed. Standing up `edgify-prod` means
+> repeating all seven setup steps (two of which were wrong in the runbook until 2026-08-04) and
+> re-running a drill that detaches billing, before Cloud Run goes up. What that buys is a better
+> name, and the name is worth less than it looks: Cloud Run URLs are
+> `SERVICE-PROJECTNUMBER.REGION.run.app`, so the project id never appears in a user-facing URL,
+> and a custom domain removes the question entirely. The real cost of `innovationmate` is that it
+> means nothing to the next reader — a documentation problem, fixed in docs/08, not a reason to
+> rebuild infrastructure.
+>
+> **State confirmed 2026-08-04 15:22 UTC, read-only:** `cap-billing` `ACTIVE`, `CAP_DRY_RUN=false`
+> (armed), `RETRY_POLICY_RETRY`, runtime and Eventarc trigger both on
+> `cap-billing@innovationmate.iam.gserviceaccount.com`, revision **`cap-billing-00008-weh`** —
+> the same revision Drill B fired on at 03:50, so the configuration that detached billing for real
+> is the one running now. `billingEnabled: true`. Live traffic still arriving every ~31 minutes
+> (`budget_notification name=trellis-hard-cap cost=0 budget=50 dryRun=false`).
+>
+> **If this target ever changes, the cap does not come with it.** Detach is project-scoped; a
+> different project has no topic, no function and no budget wired, and the guardrail must be
+> deployed and drilled there *before* Cloud Run exists — otherwise Drill B takes the service down.
+
 **Scope**
 - Cloud Run deployment per `07-deployment.md`
 - Secrets in Secret Manager, not environment plaintext

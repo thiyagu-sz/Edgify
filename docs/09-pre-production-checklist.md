@@ -82,9 +82,27 @@ then be served to anyone who uploads that same file.
 - [x] GCP budget alert configured **and confirmed firing** with a test threshold — verified 2026-08-04, execution `e3xf2c7rii25` (Drill A: `budget_notification … dryRun=true` → `DRY RUN: would disable billing … cost 500 > budget 50`). Independently corroborated by live traffic: with a Pub/Sub topic attached the budget publishes on cost updates, so `budget_notification name=trellis-hard-cap cost=0 budget=50` appears in the function log roughly every 30 minutes
 - [x] GCP budget action set to disable billing at a hard cap — verified 2026-08-04, execution `e4dtpj8t4wjr` (Drill B on `innovationmate`: real detach → `billingAccountName: ''` / `billingEnabled: false`, then re-linked → `billingEnabled: true`). **Scope: this verifies `innovationmate` only.** Billing detach is project-scoped, so a Phase 7 deploy into any other project ships with no cap until the guardrail is rebuilt and re-drilled there
 - [x] Neon spending limit set — **N/A on the Free Plan** (2026-07-25): the free tier has no billing attached and no Usage-Limits page; it hard-stops at the free allowance rather than charging, so runaway *spend* is not possible. Revisit if the project moves to a paid Neon plan.
-- [ ] Cloud Run `--max-instances` set to a finite number
+- [ ] Cloud Run `--max-instances` set to a finite number — **the load-bearing one of the two, for
+      the reason below.** Phase 7 target is `innovationmate` (docs/06 Phase 7)
 - [ ] Per-user daily quota enforced server-side and verified at the boundary
 - [ ] OpenRouter balance is only as large as you are willing to lose
+
+> **The billing cap is a backstop, not a circuit breaker — do not plan as though it stops spend.**
+> It fires when a budget notification reports `cost > budget`. Those notifications arrive a few
+> times an hour, and Google's billing data itself lags, often by hours. So between actually
+> crossing the cap and the detach firing, real money can be spent, and nothing in the drill
+> changes that: the drill proves the mechanism works, not that it works *quickly*.
+>
+> That is why `--max-instances` is the more important box on this page. **The cap bounds the total
+> after the fact; max-instances is the only thing bounding the rate.** A runaway with unlimited
+> concurrency can outspend a budget that updates every few hours, and the cap will faithfully
+> detach billing some time after the damage is done.
+>
+> Related, still open: the $50 budget has **never been tested against real spend** — every firing
+> to date used a synthetic `cost=500` message. docs/08 carries the follow-up (once Cloud Run has
+> real spend, drop the budget below it once to confirm the email notification fires too, then
+> restore). Worth deciding at the same time whether $50/month is the right number once there are
+> real users.
 
 > **Both GCP boxes above previously read "verified 2026-07-26", and that was not supportable.**
 > Drill B was recorded as "completed by the operator" with no execution id and no log line, while
