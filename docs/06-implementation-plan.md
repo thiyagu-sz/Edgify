@@ -34,24 +34,50 @@ Prove the riskiest integrations before building anything on top of them.
 exists; everything still unchecked below is UNVERIFIED (never run) rather than known-broken.
 Nothing was found broken.*
 
-- [ ] `npm run build` succeeds; **the Docker image runs locally** — build half MET (2026-08-04,
-      `Compiled successfully`); the **Docker half is UNVERIFIED**. The Dockerfile exists with
-      `output: "standalone"` and build-time env placeholders, but there is no record anywhere of
-      the image being built and run
+- [x] **`npm run build` succeeds; the Docker image runs locally** — met 2026-08-04, and **the
+      image did not build the first time it was ever tried.** `next build` evaluates modules that
+      read the environment, and the Dockerfile's build-time placeholders — written in Phase 1 —
+      never gained `OPENROUTER_API_KEY`, which Phase 3 made required. Two files drifted apart with
+      nothing connecting them, and nothing failed because the image had never been built. The
+      error names neither the variable nor the cause: `Failed to collect page data for
+      /api/auth/[...all]`, with the real message buried further up the log. Phase 7 would have hit
+      this on its first deploy.
+
+      Fixed in the Dockerfile, and `test/dockerfile-env.test.ts` now derives the requirement from
+      the schema — it removes each placeholder from a known-good environment and asserts
+      `parseEnv` rejects it — so the two cannot drift again. Listing the variables in the test
+      would have been a third copy going stale the same way.
+
+      Verified end to end: image builds (333 MB), `docker run` serves `/` **200** with the ported
+      landing markup (`lx-bento`, "Cram fast, or", "Try the demo") and `/demo` **200**. Run
+      deliberately with an unreachable database, which also exercises the docs/09 §3.1 row
+      "Database unreachable → landing page and demo still work": both served, and `/api/health`
+      returned a calm `{"status":"degraded","db":false}` with 503 — no stack trace, no vendor name
 - [ ] Sign in with Google, refresh, session persists — **UNVERIFIED.** No test covers the OAuth
       round trip; `test/e2e/seed-session.mjs` *injects* a session directly and bypasses Google, so
       it proves the session cookie works, not that sign-in does. All of docs/09 §2.1 is unchecked
 - [ ] Sign out clears the session — **UNVERIFIED.** `components/sign-out-button.tsx` exists and is
       wired; nothing asserts the session is invalidated **server-side** rather than just cleared in
       the client (docs/09 §2.1 names that distinction and is unchecked)
-- [ ] Removing a required env var stops the app at boot with a clear message — **UNVERIFIED, and
-      half of it is proven false-adjacent.** `lib/env.test.ts` confirms `parseEnv` throws naming
-      every offending variable, with the message "Invalid environment configuration. The app cannot
-      start." So the MESSAGE is good. But `env` is a lazy `Proxy` (`lib/env.ts`) whose own comment
-      says "the first property read triggers validation" — so validation fires on first *access*,
-      not at import, and no test exercises server startup at all. On Cloud Run that is the
-      difference between a container that refuses to boot and one that boots green, passes its
-      health check, and 500s on the first real request. Worth settling before Phase 7 deploys
+- [x] **Removing a required env var stops the app at boot with a clear message** — met 2026-08-04,
+      **after finding it BROKEN.** The message was never the problem: `instrumentation.ts` calls
+      `assertEnv()` in `register()` (Next's server-start hook) and `lib/env.test.ts` covers the
+      throw. What no test touched was whether the process actually *stops*.
+
+      It did not. Measured against the real production entrypoint — `node
+      .next/standalone/server.js`, the one the Dockerfile runs — the server printed
+      `✓ Ready in 0ms`, reported `Failed to prepare server … The app cannot start` naming every
+      offending variable, logged an unhandled rejection, and **was still alive when the harness
+      killed it 30 seconds later.** Next catches a throw from `register()`, logs it, and carries
+      on with a server that never prepared. On Cloud Run that is the worst shape of failure: a
+      container that never serves and never dies, so nothing crash-loops and the only signal is a
+      startup-probe timeout long after the fact.
+
+      Fixed in `instrumentation.ts` — catch, print the message, `process.exit(1)`. Verified both
+      directions: broken env now exits **1** immediately with the full variable list; a valid env
+      boots and `/api/health` returns `{"status":"ok","db":true}` against real Neon. The positive
+      control matters as much as the fix — a change that makes startup fail *harder* is easy to
+      get wrong in the direction of never starting at all
 - [ ] Database query works after Neon has idled 10+ minutes (cold start retry proven) —
       **UNVERIFIED, and already recorded as such:** docs/09 §3.1 lists "Neon cold start" under
       *"Not yet exercised (deferred)"*. The retry path exists (`RETRIABLE_CODES` + the wrapper in
@@ -191,15 +217,21 @@ this list, so six of the seven map one-to-one. **There is no AC6** — see the l
       regenerate still live, and zero browser requests to the provider
 - [x] **Forcing demo to be unavailable returns the busy message, not an exception** — met (AC4)
 - [x] **Malformed JSON triggers exactly one repair attempt, then falls through** — met (AC5)
-- [ ] Every path writes a ledger row with the correct `tier` and `outcome` — **UNVERIFIED, and the
-      gap is structural: the AC numbering skips 6.** The ladder suite runs AC1–AC5 and AC7; nothing
-      asserts this. Coverage exists only in patches — `graph-build.integration.test.ts` checks
-      `tier: "cache"` / `outcome: "ok"` on the clone path and a free/paid row on the build path,
-      while the route tests assert the *response* tier, which is a different thing from a persisted
-      row. The **demo and error outcomes are unasserted anywhere**, which is the half that matters:
-      those are the paths that fire when something is wrong, and the ledger is how the cost
-      dashboard and any post-incident question get answered. docs/09 §3.1 carries the same claim,
-      also unchecked
+- [x] **Every path writes a ledger row with the correct `tier` and `outcome`** — met 2026-08-04.
+      The gap was structural: **the AC numbering skipped 6** — AC1–AC5 and AC7 existed, this one
+      never had a test. The individual cases did each assert a row incidentally (`cache/ok`,
+      `free/ok`, `paid/fallback`, `demo`, `failed`), so most of the claim was covered by accident,
+      but `outcome: "retried"` — emitted on two separate branches of `lib/ai/generate.ts` — was
+      asserted **nowhere**: one of five `LedgerOutcome` values with no coverage at all.
+
+      AC6 now drives every ladder outcome in one test and asserts the union, rather than trusting
+      the per-case assertions to add up. It ends with an exhaustiveness check against the
+      `LedgerTier` and `LedgerOutcome` unions themselves, so adding a sixth outcome without
+      exercising it fails here instead of shipping an unobservable path. Mutation-drilled:
+      removing the retry step fails on the set comparison.
+
+      This one is load-bearing for Phase 7, which builds its usage dashboard and its "cost
+      dashboard shows per-user spend" criterion on exactly this data
 - [x] **Retries are jittered** — met (AC7), and by a better method than the criterion asks for:
       it asserts the delay's composition (`base + random component`) directly rather than eyeballing
       timings in logs, so it cannot pass on a coincidence

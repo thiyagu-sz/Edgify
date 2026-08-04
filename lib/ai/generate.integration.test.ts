@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { APICallError } from "ai";
 import { describe, expect, it } from "vitest";
-import { readLedger } from "@/lib/db/queries/ledger";
+import { readLedger, type LedgerOutcome, type LedgerTier } from "@/lib/db/queries/ledger";
 import { DEMO_NOTES } from "@/lib/demo/notes";
 import { getRemaining } from "@/lib/quota";
 import { createTestUser } from "@/test/factories";
@@ -165,6 +165,86 @@ describe("generate — degradation ladder", () => {
     // straight to the next rung (docs/04 §3).
     expect(calls.filter(isFree)).toHaveLength(freeCallsWhenMalformed());
     expect(calls.filter((m) => !isFree(m))).toHaveLength(1);
+  });
+
+  /**
+   * AC6 — "every path writes a ledger row with the correct tier and outcome".
+   *
+   * ADDED 2026-08-04, during the Phases 1-3 reconciliation. The numbering here ran AC1-AC5 and
+   * AC7: there had never been an AC6. The individual cases above do assert a ledger row each
+   * (`["cache","ok"]`, `["free","ok"]`, `paid/fallback`, `demo`, `failed`), so most of the claim
+   * was covered incidentally — but `outcome: "retried"` was emitted by
+   * `lib/ai/generate.ts` on two separate branches and asserted by NOTHING. One of five
+   * `LedgerOutcome` values had no coverage at all.
+   *
+   * The word in the criterion is EVERY, so this drives every ladder outcome in one test and
+   * asserts the union, rather than trusting that the per-case assertions above happen to add up.
+   * The exhaustiveness check at the end is the part that matters: adding a sixth `LedgerOutcome`
+   * without exercising it fails here instead of quietly shipping an unobservable code path. The
+   * ledger is what the Phase 7 usage dashboard and every post-incident cost question read.
+   */
+  it("AC6: every ladder path writes a ledger row with the correct tier and outcome", async () => {
+    const userId = await createTestUser();
+    const base = { userId, operation: "quick_notes" as const, format: "key_points" };
+
+    // 1. free / ok — succeeds on the first attempt.
+    const okText = uniqueText();
+    const ok = runner(() => ({ data: OK_MD, tokensIn: 5, tokensOut: 6 }));
+    expect((await generate({ ...base, text: okText }, { runModel: ok.runModel, sleep: noSleep })).tier).toBe("free");
+
+    // 2. cache / ok — the identical input again, served without a model call.
+    expect((await generate({ ...base, text: okText }, { runModel: ok.runModel, sleep: noSleep })).tier).toBe("cache");
+
+    // 3. free / retried — one retryable failure, then success on the SAME rung. This is the
+    //    branch that had no coverage: it is neither a clean first-try nor a fall-through.
+    let attempt = 0;
+    const flaky: RunModel = async ({ modelId }) => {
+      if (isFree(modelId) && attempt++ === 0) throw apiError(500);
+      return { data: OK_MD, tokensIn: 1, tokensOut: 1 };
+    };
+    const retriedResult = await generate({ ...base, text: uniqueText() }, { runModel: flaky, sleep: noSleep });
+    expect(retriedResult.tier).toBe("free");
+    expect(retriedResult.notice).toBeNull(); // a retry stays invisible to the user
+
+    // 4. paid / fallback — free exhausts, paid answers.
+    const fallback = runner((modelId) => {
+      if (isFree(modelId)) throw apiError(429);
+      return { data: OK_MD, tokensIn: 2, tokensOut: 2 };
+    });
+    expect((await generate({ ...base, text: uniqueText() }, { runModel: fallback.runModel, sleep: noSleep })).tier).toBe("paid");
+
+    // 5. demo / demo — every tier fails, curated content is served.
+    const dead = runner(() => {
+      throw apiError(500);
+    });
+    expect((await generate({ ...base, text: uniqueText() }, { runModel: dead.runModel, sleep: noSleep })).tier).toBe("demo");
+
+    // 6. demo / failed — every tier fails AND no demo content fits.
+    await expect(
+      generate({ ...base, text: uniqueText() }, { runModel: dead.runModel, sleep: noSleep, demoFor: () => null }),
+    ).rejects.toBeInstanceOf(ServiceBusyError);
+
+    const rows = await readLedger(userId);
+    const seen = new Set(rows.map((r) => `${r.tier}/${r.outcome}`));
+
+    expect(seen).toEqual(
+      new Set(["free/ok", "cache/ok", "free/retried", "paid/fallback", "demo/demo", "demo/failed"]),
+    );
+
+    // Exhaustiveness. Every value the ledger's own union can hold must have been produced above,
+    // so a new tier or outcome cannot be added without a path that exercises it.
+    const TIERS: LedgerTier[] = ["cache", "free", "paid", "demo"];
+    const OUTCOMES: LedgerOutcome[] = ["ok", "retried", "fallback", "demo", "failed"];
+    expect(new Set(rows.map((r) => r.tier))).toEqual(new Set(TIERS));
+    expect(new Set(rows.map((r) => r.outcome))).toEqual(new Set(OUTCOMES));
+
+    // The cache row must be free in every sense — it is the row the cost dashboard reads to show
+    // a saving, so a nonzero token count there would overstate spend.
+    const cacheRow = rows.find((r) => r.tier === "cache");
+    expect(cacheRow?.tokensIn).toBe(0);
+    expect(cacheRow?.tokensOut).toBe(0);
+    // Every row is attributed and typed — a null operation would be invisible to a per-user report.
+    for (const row of rows) expect(row.operation).toBe("quick_notes");
   });
 
   it("AC7: retries use jittered backoff (delay = base + random component)", async () => {

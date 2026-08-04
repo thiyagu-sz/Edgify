@@ -153,6 +153,7 @@ describe("secret scan: the baseline matches the tree", () => {
     "Dockerfile",
     "docs/09-pre-production-checklist.md",
     "lib/env.test.ts",
+    "test/dockerfile-env.test.ts",
     "test/secret-scan.test.ts",
     "test/setup-component.ts",
     "test/setup-env.ts",

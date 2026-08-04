@@ -45,8 +45,8 @@ than assumed:
   of `postgresql://`, so this check had been blind to the exact URL shape this project uses. Now
   `postgres(ql)?://`.
 
-**Known baseline — eight files. CORRECTED 2026-08-02: this list said "three files, and only
-these three", and that was wrong.** A whole-tree run finds eight, so five hits were undocumented
+**Known baseline — nine files. CORRECTED 2026-08-02: this list said "three files, and only
+these three", and that was wrong.** A whole-tree run finds nine, so five hits were undocumented
 and a reader following this section would have treated each as a possible live credential — or,
 worse, learned to wave the whole check through. The list is now the real one, and
 `test/secret-scan.test.ts` pins it: adding a ninth credential-shaped file fails the suite until
@@ -72,6 +72,12 @@ it is either removed or documented here.
 - `lib/env.test.ts` — a Neon-shaped `DATABASE_URL` fixture for the env validator.
 - `test/setup-env.ts`, `test/setup-component.ts` — `postgresql://test:test@localhost/…` defaults
   for the unit and component suites.
+- `test/dockerfile-env.test.ts` — added 2026-08-04. Matches on `GOOGLE_CLIENT_SECRET:
+  "build-placeholder"`, because the pattern is case-insensitive and this file's entire job is
+  asserting the Dockerfile sets that variable. Unavoidable, and the value is visibly not a
+  credential. Its `DATABASE_URL` fixture was deliberately written WITHOUT a `user:password@` part
+  so it does not match twice — the schema only checks the URL prefix, so credentials there would
+  have been shape for no benefit.
 
 None is suppressed, and the regex is not loosened to exclude them. Telling a placeholder from a
 real credential by regex means trusting the literal string `user` — or trusting `localhost`, which

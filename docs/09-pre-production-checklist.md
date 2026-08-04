@@ -359,9 +359,17 @@ threw a bare `APICallError` and the SDK does not:
 Regression coverage: `lib/ai/error-classification.test.ts`, which also pins the surprising SDK
 contract above so a future version cannot change it silently.
 
-Not yet exercised (deferred): 402, rate-limit storm, database unreachable, Neon cold start, and
-the slow-model timeout at the server (the *client* 45s deadline is covered in
+Not yet exercised (deferred): 402, rate-limit storm, Neon cold start, and the slow-model timeout at
+the server (the *client* 45s deadline is covered in
 `components/notes/quick-notes.resilience.test.tsx`).
+
+**"Database unreachable" was exercised 2026-08-04** and passes, as a side effect of the first
+Docker image smoke test: the container was run deliberately pointed at a dead database
+(`postgresql://nobody@127.0.0.1:5432/none`). `/` returned **200** with the full landing page and
+`/demo` returned **200** — both are static and hold no database dependency — while `/api/health`
+returned a calm `{"status":"degraded","db":false}` with 503. No stack trace, no vendor name, no
+raw error. That is the docs/04 §6 behaviour: the app degrades to landing plus demo rather than
+failing whole.
 
 ### 3.2 Load and capacity
 

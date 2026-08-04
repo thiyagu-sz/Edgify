@@ -17,7 +17,14 @@ ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \
     BETTER_AUTH_SECRET="build-time-placeholder-secret-000000000" \
     BETTER_AUTH_URL="http://localhost:3000" \
     GOOGLE_CLIENT_ID="build-placeholder" \
-    GOOGLE_CLIENT_SECRET="build-placeholder"
+    GOOGLE_CLIENT_SECRET="build-placeholder" \
+    OPENROUTER_API_KEY="build-placeholder"
+# This list must cover EVERY variable lib/env.ts requires without a default, and it silently went
+# stale once already: OPENROUTER_API_KEY became required in Phase 3, months after this file was
+# written in Phase 1, and the image simply stopped building — "Failed to collect page data for
+# /api/auth/[...all]", which names neither the variable nor the cause. Nobody noticed because the
+# image had never been built. test/dockerfile-env.test.ts now reads both this file and the schema
+# and fails if they diverge again.
 RUN npm run build
 
 FROM node:22-alpine AS runner
