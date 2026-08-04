@@ -123,7 +123,9 @@ console.log(`Base: ${BASE}   samples: ${N}\n`);
 // only the very first request pays for.
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  // Fail safe, matching lib/db/client.ts. Inert while DATABASE_URL carries an sslmode — pg merges
+  // the parsed connection string OVER this option — but live the moment one does not.
+  ssl: { rejectUnauthorized: true },
 });
 const db = stats(await probeDbDirect(pool));
 await pool.end();

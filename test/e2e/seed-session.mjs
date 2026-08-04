@@ -48,7 +48,9 @@ async function seed() {
   const { url, secret, baseUrl } = readEnv();
   const pool = new pg.Pool({
     connectionString: url,
-    ssl: { rejectUnauthorized: false },
+    // Fail safe, matching lib/db/client.ts. Inert while DATABASE_URL carries an sslmode — pg
+    // merges the parsed connection string OVER this option — but live the moment one does not.
+    ssl: { rejectUnauthorized: true },
     connectionTimeoutMillis: 20_000,
   });
 
@@ -93,7 +95,9 @@ async function cleanup() {
   const { url } = readEnv();
   const pool = new pg.Pool({
     connectionString: url,
-    ssl: { rejectUnauthorized: false },
+    // Fail safe, matching lib/db/client.ts. Inert while DATABASE_URL carries an sslmode — pg
+    // merges the parsed connection string OVER this option — but live the moment one does not.
+    ssl: { rejectUnauthorized: true },
     connectionTimeoutMillis: 20_000,
   });
   try {

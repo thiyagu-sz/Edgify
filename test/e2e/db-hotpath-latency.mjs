@@ -18,7 +18,9 @@ const N = Number(process.env.N ?? 12);
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  // Fail safe, matching lib/db/client.ts. Inert while DATABASE_URL carries an sslmode — pg merges
+  // the parsed connection string OVER this option — but live the moment one does not.
+  ssl: { rejectUnauthorized: true },
   max: 8,
 });
 

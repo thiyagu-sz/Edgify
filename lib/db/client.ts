@@ -25,7 +25,29 @@ export function getPool(): Pool {
       // Neon can take a few seconds to resume from suspend; allow for it.
       connectionTimeoutMillis: 10_000,
       idleTimeoutMillis: 30_000,
-      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      /**
+       * VERIFY the server certificate. This is the user-data database; encryption without
+       * authentication protects the bytes in flight but not who you are talking to.
+       *
+       * THE URL WINS, NOT THIS LINE. `pg` builds its config as
+       * `Object.assign({}, config, parse(connectionString))`, so a `sslmode` in `DATABASE_URL`
+       * overrides whatever is passed here; this option applies only when the URL carries no
+       * `sslmode` at all. Measured against the live endpoint on 2026-08-04, not assumed:
+       * `sslmode=verify-full` + a deliberately bogus `ca` still connected (the ca was discarded),
+       * while the same bogus `ca` with no `sslmode` in the URL failed with
+       * `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
+       *
+       * So this read `rejectUnauthorized: false` until 2026-08-04 without weakening anything —
+       * `sslmode=require` was present and, in pg 8.x, means verify-full. It was a LATENT footgun
+       * rather than a live hole: drop `sslmode` from the URL and the fallback would have silently
+       * stopped verifying. Now the fallback is the safe one, and the URL says `verify-full`
+       * explicitly so a future pg major (which weakens `require` to libpq semantics) cannot
+       * downgrade it either.
+       *
+       * Neon's certificates are publicly trusted, so no CA bundle is needed. Localhost — the
+       * testcontainer suites — has no TLS at all, hence the branch.
+       */
+      ssl: useSsl ? { rejectUnauthorized: true } : false,
     });
   }
   return pool;
