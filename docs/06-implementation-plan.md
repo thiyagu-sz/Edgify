@@ -743,11 +743,60 @@ so neither seam can regress.
 - Responsive behaviour down to mobile
 
 **Acceptance criteria**
-- [ ] Landing page matches the prototype
-- [ ] Dark landing tokens do not affect workspace styling
-- [ ] `/demo` works fully signed out — graph, quizzes, flashcards, export
-- [ ] Demo content is never written to any user's records
-- [ ] Logo returns to the landing page from the app
+- [x] **Landing page matches the prototype** — met 2026-08-04. The comparison is DERIVED from
+      `docs/reference/edgify-prototype.html` at run time (`app/(marketing)/landing.test.tsx`),
+      not transcribed into the test: every class token and every anchor id in the prototype's
+      `#landing` block must appear in the render, and the bento/step/mode counts must match. A
+      hand-written list would be a second copy of the spec that goes stale silently — it would
+      still pass after a section was dropped, because the list would have been trimmed in the
+      same commit. Drilled: removing one of the three `.lx-step` panels fails with
+      `expected 2 to be 3`
+- [x] **Dark landing tokens do not affect workspace styling** — met 2026-08-04. The landing
+      redefines six tokens the light workspace also uses (`--body`, `--muted`, `--muted-soft`,
+      `--accent`, `--success`, plus landing-only `--accent-soft`), so a declaration escaping
+      `#landing` repaints the whole signed-in app from a file nobody editing the landing page
+      would think to check. Every ported selector is therefore explicitly prefixed `#landing` —
+      one deliberate departure from a verbatim port, since the prototype leaves the `.lx-`
+      classes global — and `app/globals.test.ts` walks the CSS brace-aware, recursing into
+      `@media`, asserting no landing selector and no dark token assignment sits outside that
+      scope. Three negative controls fire: a `:root` dark token, an unscoped `.lx-card`, and an
+      unscoped rule nested inside a media query
+- [x] **`/demo` works fully signed out — graph, quizzes, flashcards, export** — met 2026-08-04.
+      `app/demo/page.tsx` sits OUTSIDE the `(app)` route group, whose layout resolves a session
+      and redirects; being outside it means signed-out is structural rather than an exemption
+      someone has to remember. It prerenders as static (`○ /demo` in the build output) — no
+      session read, no database access. Both features are behind the prototype's two-mode
+      switcher, and the graph is the REAL `KnowledgeGraph` component with a different transport,
+      not a copy that drifts
+- [x] **Demo content is never written to any user's records** — met 2026-08-04. This is the
+      phase's PROOF. The guarantee is capability, not discipline: `components/graph/
+      demo-transport.ts` closes over frozen data and contains no `fetch` at any depth, and
+      neither does anything it imports, so the demo cannot write for the same reason a pure
+      function cannot. Asserted two ways in `components/demo/demo-writes.test.tsx` — a
+      structural scan of the module source, and a `fetch` spy over the full interactive surface
+      (three concepts visited, details resolved, mastery marked, formats switched, both features
+      exercised) that must record ZERO calls. `canUpload: false` removes the upload control and
+      its file input entirely, so there is no route to `POST /api/documents` rather than a
+      disabled button.
+
+      **The controls are the point, and one of them was wrong first.** Every containment
+      assertion is paired with the same interactions on `liveGraphTransport`, which must call
+      `/api/concepts/:id/detail` AND `/api/mastery` — named individually, because "some write
+      happened" stays green when only one path is still reached. That is not hypothetical: the
+      first draft looked for the mastery button as `.m-btn.known`, a class that exists nowhere,
+      so it clicked nothing and mastery was never exercised — yet both the containment test and
+      its control passed, the control firing on the detail POSTs alone. Fixed by asserting the
+      click landed (the button must become "Mastered") before the counts are read. Mutation
+      drill: adding a single `fetch` to the demo transport turns both guards red independently
+- [x] **Logo returns to the landing page from the app** — met 2026-08-04, and it was already
+      true: `components/top-bar.tsx` has linked the brand to `/` since Phase 4. Verified rather
+      than built, in both the signed-in TopBar and the demo chrome
+
+> Two departures from the prototype, both deliberate and both recorded above: the `#landing`
+> prefix on every landing selector, and a third "Try the demo" call to action in the hero, nav
+> and footer. The prototype predates the `/demo` route and has no entry point for it, while
+> docs/06's scope requires one. The addition reuses the existing `.lx-btn-glass` styling and
+> removes nothing, so every element the prototype specifies is still present and unchanged.
 
 ---
 

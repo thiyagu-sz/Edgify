@@ -16,7 +16,7 @@ import {
 import { graphToMarkdown } from "@/lib/graph/study-guide";
 import { plainText } from "@/lib/sanitize";
 import { ConceptPanel, ReadinessRing } from "./concept-panel";
-import type { DetailState, GraphConceptView, GraphView } from "./types";
+import type { DetailState, GraphConceptView, GraphTransport, GraphView } from "./types";
 
 /**
  * The Knowledge Graph workspace (W4–W7, docs/05) — a faithful React port of the prototype's
@@ -43,6 +43,32 @@ const BUILD_FAILED_MESSAGE =
   "Couldn't map this document's structure. Quick Notes still works on it.";
 const BUSY_MESSAGE = "Server is busy, please try again in a moment.";
 
+/**
+ * The real transport: the four network calls this workspace makes when a signed-in user drives
+ * it. `/demo` swaps it for `demoGraphTransport`, which has no `fetch` at any depth — see the note
+ * on `GraphTransport` in ./types.
+ */
+export const liveGraphTransport: GraphTransport = {
+  async loadDetail(concept) {
+    const res = await fetch(`/api/concepts/${concept.id}/detail`, { method: "POST" });
+    const body = (await res.json()) as { status?: string; detail?: ConceptDetail };
+    return body.status === "ready" && body.detail
+      ? { kind: "ready", detail: body.detail }
+      : { kind: "unavailable" };
+  },
+  saveMastery(concept, state) {
+    void fetch("/api/mastery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conceptId: concept.id, state }),
+    }).catch(() => {
+      // W6: no model call, so this must never surface a busy state. The local view stays
+      // correct for this session; a reload re-reads whatever was actually stored.
+    });
+  },
+  canUpload: true,
+};
+
 type View = "graph" | "concepts" | "plan";
 type SubTab = "overview" | "quiz" | "cards";
 
@@ -56,12 +82,27 @@ type Status =
   | { kind: "failed"; message: string }
   | { kind: "busy"; graphId: string };
 
-export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | null }) {
+export function KnowledgeGraph({
+  initialGraphId,
+  initialGraph = null,
+  transport = liveGraphTransport,
+}: {
+  initialGraphId: string | null;
+  /**
+   * A graph supplied up front instead of polled for. `/demo` uses this: the content is static, so
+   * there is nothing to wait on and `pollGraph` never runs — which is also why the demo issues no
+   * GET, not merely no writes.
+   */
+  initialGraph?: GraphView | null;
+  transport?: GraphTransport;
+}) {
   const [status, setStatus] = useState<Status>(
-    initialGraphId ? { kind: "loading" } : { kind: "empty" },
+    initialGraph ? { kind: "ready" } : initialGraphId ? { kind: "loading" } : { kind: "empty" },
   );
-  const [graph, setGraph] = useState<GraphView | null>(null);
-  const [mastery, setMastery] = useState<Map<string, MasteryState>>(new Map());
+  const [graph, setGraph] = useState<GraphView | null>(initialGraph);
+  const [mastery, setMastery] = useState<Map<string, MasteryState>>(
+    () => new Map((initialGraph?.mastery ?? []).map((m) => [m.slug, m.state])),
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>("graph");
   const [subTab, setSubTab] = useState<SubTab>("overview");
@@ -127,28 +168,15 @@ export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | nu
       updateDetails((prev) => new Map(prev).set(concept.slug, { kind: "loading" }));
 
       try {
-        const res = await fetch(`/api/concepts/${concept.id}/detail`, { method: "POST" });
-        const body = (await res.json()) as {
-          status?: string;
-          detail?: ConceptDetail;
-          summary?: string;
-        };
-        updateDetails((prev) => {
-          const next = new Map(prev);
-          if (body.status === "ready" && body.detail) {
-            next.set(concept.slug, { kind: "ready", detail: body.detail });
-          } else {
-            next.set(concept.slug, { kind: "unavailable" });
-          }
-          return next;
-        });
+        const resolved = await transport.loadDetail(concept);
+        updateDetails((prev) => new Map(prev).set(concept.slug, resolved));
       } catch {
         updateDetails((prev) => new Map(prev).set(concept.slug, { kind: "unavailable" }));
       } finally {
         detailInFlight.current.delete(concept.slug);
       }
     },
-    [updateDetails],
+    [transport, updateDetails],
   );
 
   // ── Loading and polling ────────────────────────────────────────────────────
@@ -339,17 +367,11 @@ export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | nu
       if (!concept) return;
       // Optimistic: readiness recomputes locally and the graph re-colours immediately. The write
       // is what makes it survive a reload, and it cannot fail in a way the user needs to see.
+      // In demo mode there is no write at all, and the local recolour is the whole behaviour.
       setMastery((prev) => new Map(prev).set(slug, state));
-      void fetch("/api/mastery", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conceptId: concept.id, state }),
-      }).catch(() => {
-        // W6: no model call, so this must never surface a busy state. The local view stays
-        // correct for this session; a reload re-reads whatever was actually stored.
-      });
+      transport.saveMastery(concept, state);
     },
-    [graph],
+    [graph, transport],
   );
 
   const selectConcept = useCallback(
@@ -387,18 +409,22 @@ export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | nu
 
   return (
     <section className="feature">
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          // Reset first, so picking the same file twice still fires a change event.
-          e.target.value = "";
-          if (file) void onFilePicked(file);
-        }}
-      />
+      {/* No upload path in demo mode: the control, its file input and the modal are all absent,
+          so there is no route from the UI to POST /api/documents rather than a disabled button. */}
+      {transport.canUpload && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Reset first, so picking the same file twice still fires a change event.
+            e.target.value = "";
+            if (file) void onFilePicked(file);
+          }}
+        />
+      )}
 
       <div className="gbar">
         <div className="pill-group mini" role="tablist" aria-label="Graph view">
@@ -445,10 +471,12 @@ export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | nu
             <IconDownload />
             <span>DOC</span>
           </button>
-          <button className="btn-secondary" type="button" onClick={() => fileRef.current?.click()}>
-            <IconUpload />
-            <span>Upload document</span>
-          </button>
+          {transport.canUpload && (
+            <button className="btn-secondary" type="button" onClick={() => fileRef.current?.click()}>
+              <IconUpload />
+              <span>Upload document</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -539,13 +567,15 @@ export function KnowledgeGraph({ initialGraphId }: { initialGraphId: string | nu
         </>
       )}
 
-      <UploadModal
-        open={modalOpen}
-        stage={stage}
-        file={modalFile}
-        error={modalError}
-        onClose={() => setModalOpen(false)}
-      />
+      {transport.canUpload && (
+        <UploadModal
+          open={modalOpen}
+          stage={stage}
+          file={modalFile}
+          error={modalError}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
     </section>
   );
 }

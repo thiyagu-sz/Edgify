@@ -372,8 +372,14 @@ export function QuickNotes({
   );
 }
 
-/** Interactive quiz with live scoring (prototype `renderQuizOutput`). Text is React-escaped. */
-function QuizView({ quiz }: { quiz: Quiz }) {
+/**
+ * Interactive quiz with live scoring (prototype `renderQuizOutput`). Text is React-escaped.
+ *
+ * Exported since Phase 6 so `/demo` renders the SAME quiz, banner and export header as the real
+ * workspace rather than look-alikes. Only the orchestration around them differs, and it differs
+ * for a real reason: the demo has nothing to generate.
+ */
+export function QuizView({ quiz }: { quiz: Quiz }) {
   const [answers, setAnswers] = useState<(number | null)[]>(() => quiz.questions.map(() => null));
   const total = quiz.questions.length;
   const answered = answers.filter((a) => a !== null).length;
@@ -433,7 +439,7 @@ function QuizView({ quiz }: { quiz: Quiz }) {
   );
 }
 
-function NoticeBanner({ notice }: { notice: Exclude<Notice, null> }) {
+export function NoticeBanner({ notice }: { notice: Exclude<Notice, null> }) {
   return (
     <div className="notice-banner" role="status">
       <IconInfo />
@@ -452,7 +458,7 @@ function NoticeBanner({ notice }: { notice: Exclude<Notice, null> }) {
   );
 }
 
-function OutputHead({
+export function OutputHead({
   label,
   chars,
   showCopy,
