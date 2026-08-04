@@ -76,19 +76,35 @@ Unglamorous, early, and the reason nothing catches fire later.
   session and quota reads, so it cannot do expensive work either.
 
 **Acceptance criteria**
-- [ ] **A test billing alert actually fires — NEVER RUN. The oldest open safety gap in the
-      project.** Deferred during Phase 2 and never picked up; confirmed 2026-07-29 by tracing
-      back through the work. The cap function exists (`infra/billing-cap/`) and the runbook is
-      written (docs/08), but no GCP project has been created and the drill has not been executed
-      once — which is why `PROJECT_ID` and the budget display name were free to be renamed to
-      `edgify-*`: they name resources that do not exist yet.
+- [x] **A test billing alert actually fires — met 2026-08-04** on project `innovationmate`,
+      execution `e4dtpj8t4wjr`: `budget_notification … cost=500 budget=50 dryRun=false` then
+      `BILLING DISABLED for projects/innovationmate.`, with `billingEnabled` observed going
+      `true → false → true`. Full record and the corrected setup in docs/08.
 
-      Not blocking Phase 5. But Phase 3 onward spends real money, and the entire billing-cap
-      apparatus exists so that a 3am retry loop cannot drain the account. Reaching Phase 7 with
-      the cap **built but never once fired** is the largest unverified risk in the build:
-      "the billing cap works" is currently an assumption, not a tested fact — the only major
-      claim here that has not been checked against reality the way everything else has. Needs a
-      clear half hour. Also gated at launch by docs/09.
+      **This entry previously read "NEVER RUN … no GCP project has been created", and that was
+      wrong.** The project existed the whole time as `innovationmate`; the Trellis→Edgify rename
+      touched only the documents, so the resources appeared fictional when read back through the
+      new names. The reasoning was backwards — `PROJECT_ID` was not free to rename *because*
+      nothing existed; it was renamed while the real thing kept its old name, and the budget is
+      still called `trellis-hard-cap` today. Any claim that infrastructure does not exist has to
+      be checked against the API, never inferred from what the docs call it.
+
+      The correction matters beyond bookkeeping: this entry told the next reader the cap had
+      never fired, while the deployed function was sitting **armed** (`CAP_DRY_RUN=false`). Acting
+      on it — publishing the sample message to see what happens — would have detached billing for
+      real, with no maintenance window and no warning.
+
+      What the drill actually found: the cap had been deployed since 2026-07-26 and **could never
+      have worked**. Its service account held no billing permission at all (docs/08 step 5 was
+      never run), `roles/billing.projectManager` alone is insufficient because the pre-flight read
+      at `infra/billing-cap/index.js:45` also needs `roles/browser`, and retries were off so the
+      one failure that mattered would have been silent. None of this was reachable by the drill
+      that *had* been run — see docs/08 on why Drill A is structurally blind to it.
+
+      **Scope of what this verifies:** billing detach is project-scoped, so the cap protects
+      `innovationmate` and nothing else. If Phase 7 deploys to a different project, the guardrail
+      must be rebuilt and re-drilled there; "a cap exists somewhere" is not the gate. Also gated
+      at launch by docs/09.
 - [ ] Isolation test: user A's document is invisible to user B through **every** query function
 - [ ] Quota increments, enforces at the limit, and resets at day boundary
 - [ ] An unauthenticated route rejects a burst of requests

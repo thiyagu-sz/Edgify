@@ -64,14 +64,20 @@ Cloud Billing Budget ──threshold exceeded──▶ Pub/Sub topic ──▶ C
                                                     detaches billing account → billing off
 ```
 
-Source: [`infra/billing-cap/`](../infra/billing-cap/). Identifiers used below:
+Source: [`infra/billing-cap/`](../infra/billing-cap/). Identifiers below are the **live** ones as of
+2026-08-04. Earlier revisions of this file used `PROJECT_ID=edgify-prod`; **no such project has
+ever existed** — that name came from the Trellis→Edgify rename and was never applied to the
+infrastructure, which is why the budget is still called `trellis-hard-cap`. See the drill record.
 
 ```bash
-PROJECT_ID=edgify-prod; BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
-TOPIC=billing-alerts;     REGION=us-central1
+PROJECT_ID=innovationmate; BILLING_ACCOUNT=01CC5B-2F930F-3694A8
+TOPIC=billing-alerts;      REGION=us-central1
+SA=cap-billing@$PROJECT_ID.iam.gserviceaccount.com
 ```
 
-**One-time setup** (run from the repo root; in Cloud Shell, `gh repo clone thiyagu-sz/Edgify` first)
+**One-time setup** — run from the repo root; in Cloud Shell,
+`gh repo clone thiyagu-sz/Edgify -- --branch phase-5` first. **The branch matters:** `infra/` is
+not on `main`, and a default clone fails at deploy with `Provided directory does not exist`.
 
 0. Enable the APIs and create the Pub/Sub service identity Eventarc needs:
    ```bash
@@ -102,57 +108,169 @@ TOPIC=billing-alerts;     REGION=us-central1
    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
      --member="serviceAccount:$PUBSUB_SA" --role="roles/iam.serviceAccountTokenCreator"
    ```
-4. Deploy the function, starting in dry-run so the first drill proves wiring without touching
-   billing. (The source registers via `functions.cloudEvent` — a bare gen1-style `exports.x`
-   leaves the CloudEvent payload empty on gen2, which reads as "within budget" every time.)
+4. Give the function a dedicated identity and the four roles it needs — **all project-scoped**.
+   ```bash
+   gcloud iam service-accounts create cap-billing --project="$PROJECT_ID"
+   for R in roles/billing.projectManager roles/browser \
+            roles/run.invoker roles/eventarc.eventReceiver; do
+     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+       --member="serviceAccount:$SA" --role="$R" --condition=None --quiet
+   done
+   ```
+   - `billing.projectManager` — carries `deleteBillingAssignment`, the detach at `index.js:57`.
+     Verify with `gcloud iam roles describe`: it holds **exactly two** permissions, both writes,
+     and **no read of any kind**.
+   - `browser` — `resourcemanager.projects.get`, which `isBillingEnabled()` needs at
+     `index.js:45`. Omit it and the function dies on the pre-flight read, three lines short of
+     the detach, with a `PERMISSION_DENIED` that looks identical to missing write access.
+   - `run.invoker` + `eventarc.eventReceiver` — `--service-account` in step 5 **also repoints the
+     Eventarc trigger identity**, not just the runtime. Without these the trigger cannot deliver
+     and the cap goes deaf: worse than a broken cap, because it stops logging entirely.
+
+   IAM takes 1–3 minutes to propagate. A `PERMISSION_DENIED` in the first minutes is expected;
+   with `--retry` on it clears itself, which is visible in the logs as a backoff ladder.
+
+   **Earlier revisions of this step said `gcloud billing accounts add-iam-policy-binding
+   "$BILLING_ACCOUNT" --role=roles/billing.admin` against whatever SA the function happened to
+   run as — do not do that.** That grants read+write over *every* project on the billing account,
+   and the SA it lands on is the default compute account, which is inherited by every Cloud Run
+   service, function and VM in the project — so in Phase 7 the Edgify web service itself would run
+   with the power to detach billing. The four roles above are strictly narrower and sufficient:
+   verified by Drill B on 2026-08-04.
+5. Deploy onto that identity, starting in dry-run so the first drill proves wiring without
+   touching billing, and with `--retry` so a transient failure at the moment the real cap is
+   needed is not a permanent silent miss. (The source registers via `functions.cloudEvent` — a
+   bare gen1-style `exports.x` leaves the CloudEvent payload empty on gen2, which reads as
+   "within budget" every time.)
    ```bash
    gcloud functions deploy cap-billing --gen2 --runtime=nodejs22 --region="$REGION" \
      --source=infra/billing-cap --entry-point=capBilling --trigger-topic="$TOPIC" \
-     --set-env-vars=GCP_PROJECT="$PROJECT_ID",CAP_DRY_RUN=true --project="$PROJECT_ID"
+     --service-account="$SA" \
+     --set-env-vars=GCP_PROJECT="$PROJECT_ID",CAP_DRY_RUN=true \
+     --retry --project="$PROJECT_ID"
    ```
-5. Let the function change billing:
+   Confirm both identities landed — runtime *and* trigger — plus the retry policy:
    ```bash
-   SA=$(gcloud functions describe cap-billing --gen2 --region="$REGION" \
-        --format='value(serviceConfig.serviceAccountEmail)')
-   gcloud billing accounts add-iam-policy-binding "$BILLING_ACCOUNT" \
-     --member="serviceAccount:$SA" --role="roles/billing.admin"
+   gcloud functions describe cap-billing --gen2 --region="$REGION" --project="$PROJECT_ID" \
+     --format="value(serviceConfig.serviceAccountEmail, eventTrigger.serviceAccountEmail,
+                     serviceConfig.environmentVariables.CAP_DRY_RUN, eventTrigger.retryPolicy)"
    ```
 
 **Fire drill — prove the cap fires, not just that it exists.** Pre-deploy GCP spend is ~$0, and
 a budget only alerts when `cost ≥ threshold × budget`, so we publish a **synthetic**
 budget-exceeded message (Google's own recommended test).
 
-*Drill A — wiring, dry run:*
+*Drill A — wiring, dry run.* **Check the deployed value of `CAP_DRY_RUN` before publishing, every
+time** — the message says `cost=500 / budget=50`, so against an armed function this *is* Drill B,
+unannounced and outside a maintenance window:
 ```bash
+gcloud functions describe cap-billing --gen2 --region="$REGION" --project="$PROJECT_ID" \
+  --format="value(serviceConfig.environmentVariables.CAP_DRY_RUN)"   # MUST print: true
+
 gcloud pubsub topics publish "$TOPIC" --project "$PROJECT_ID" \
   --message "$(cat infra/billing-cap/sample-budget-message.json)"
 gcloud functions logs read cap-billing --gen2 --region="$REGION" --limit=20
-# Expect: "budget_notification" then "DRY RUN: would disable billing …"
+# Expect: "budget_notification … dryRun=true" then "DRY RUN: would disable billing …"
+# `dryRun=false` in that line means you are not in a dry run. Stop.
 ```
+Passing Drill A proves the wiring and the billing **read**. It says nothing about whether the cap
+can actually detach — see the drill record below.
 
-*Drill B — the real cap, in a maintenance window:*
+*Drill B — the real cap, in a maintenance window.* **Run as two separate pastes.** Arming and
+firing in one block means a stray paste detaches billing; splitting them makes the fire step a
+deliberate act, taken only after the arm step has been read back.
+
+*B1 — confirm the blast radius, record the baseline, arm:*
 ```bash
+# Detaching billing takes down EVERYTHING in the project, not just the cap.
+gcloud run services list --project="$PROJECT_ID"     # cap-billing is the function itself
+gcloud functions list --project="$PROJECT_ID"
+gcloud firestore databases list --project="$PROJECT_ID"
+gcloud beta billing projects describe "$PROJECT_ID"  # baseline: billingEnabled: true
+
 gcloud functions deploy cap-billing --gen2 --region="$REGION" \
   --source=infra/billing-cap --entry-point=capBilling --trigger-topic="$TOPIC" \
-  --update-env-vars=CAP_DRY_RUN=false
+  --service-account="$SA" --update-env-vars=CAP_DRY_RUN=false \
+  --retry --project="$PROJECT_ID"
+
+gcloud functions describe cap-billing --gen2 --region="$REGION" --project="$PROJECT_ID" \
+  --format="value(serviceConfig.environmentVariables.CAP_DRY_RUN,eventTrigger.retryPolicy)"
+# MUST print:  false  RETRY_POLICY_RETRY   — anything else, stop; the deploy did not take
+```
+
+*B2 — fire and restore, as one paste. Do not pause between them:*
+```bash
 gcloud pubsub topics publish "$TOPIC" --project "$PROJECT_ID" \
   --message "$(cat infra/billing-cap/sample-budget-message.json)"
-gcloud beta billing projects describe "$PROJECT_ID"    # billingEnabled: false  ← action fired
+sleep 30
+gcloud beta billing projects describe "$PROJECT_ID"  # billingEnabled: false  ← action fired
 # ── RESTORE ──
 gcloud beta billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT"
-gcloud beta billing projects describe "$PROJECT_ID"    # billingEnabled: true
+gcloud beta billing projects describe "$PROJECT_ID"  # billingEnabled: true
+# logs last: Cloud Logging retains them, so do not stay detached to read output
+gcloud functions logs read cap-billing --gen2 --region="$REGION" --project="$PROJECT_ID" --limit=8
 ```
-Evidence to keep: the published message, the function log line, and the
-`billingEnabled: false → true` transition.
 
-> **Drill result — 2026-07-26 (project `innovationmate`).** **Drill A verified:** a synthetic
-> `cost=500 / budget=50` message produced `budget_notification … cost=500 budget=50 dryRun=true`
-> then `DRY RUN: would disable billing for projects/innovationmate (cost 500 > budget 50).`
-> (execution `1wwc0tvintnw`). **Drill B completed by the operator:** billing detached
-> (`billingEnabled: false`) and re-linked (`billingEnabled: true`). **AC1 satisfied.** Two gotchas
-> hit and folded into the setup above: the budget flag is `--notifications-rule-pubsub-topic`,
-> and the Pub/Sub service agent needed `roles/iam.serviceAccountTokenCreator`; also the function
-> had to be a `functions.cloudEvent` CloudEvent function or the payload arrived empty.
+**Once billing is off, redeploying is impossible** — Cloud Build needs billing. The only way back
+is `projects link`, which is why restore is a link and not a redeploy, and why the operator must
+already hold `roles/billing.admin` on the account before starting.
+
+**Then watch the logs for three minutes.** A *second* `BILLING DISABLED` after the relink means the
+message nacked and redelivered, and the cap has detached billing again — relink again. Expected
+behaviour is a clean ack (`disableBilling()` returns and the handler resolves long before the
+detach reaches the Cloud Run scheduler), but `--retry` makes this the one hazard the drill itself
+introduces, so confirm it rather than assume it.
+
+Evidence to keep: the published message id, the execution id, both log lines, and the
+`billingEnabled: true → false → true` transition.
+
+> **Drill result — 2026-08-04 (project `innovationmate`, billing account `01CC5B-2F930F-3694A8`).**
+> **Drill A verified** (execution `e3xf2c7rii25`): synthetic `cost=500 / budget=50` produced
+> `budget_notification … dryRun=true` then `DRY RUN: would disable billing for
+> projects/innovationmate (cost 500 > budget 50).` **Drill B verified** (execution `e4dtpj8t4wjr`,
+> message `20881984335134252`, revision `cap-billing-00008-weh`): `budget_notification …
+> dryRun=false` at 03:50:05.568 then `BILLING DISABLED for projects/innovationmate.` at
+> 03:50:08.097 — 2.5s end to end — with `gcloud beta billing projects describe` showing
+> `billingAccountName: ''` / `billingEnabled: false`, restored to `true` by `projects link`.
+> Exactly one `BILLING DISABLED` line: the message acked on first delivery, so retry did not
+> re-detach after the relink. **AC1 satisfied.**
+>
+> **The 2026-07-26 entry this replaces claimed Drill B had been completed. It had not, and could
+> not have been.** On 2026-08-04 the function's service account held no billing permission
+> whatsoever — the whole billing-account policy contained a single binding, to the operator's own
+> user account — so `updateProjectBillingInfo` could only ever have returned `PERMISSION_DENIED`.
+> Nothing removes IAM bindings spontaneously; **step 5 below was simply never run.** The
+> `billingEnabled: false → true` transition that was recorded as evidence was almost certainly
+> the operator's own `unlink`/`link`, which tests the operator's permissions, not the function's.
+> The tell was in the record itself: Drill A carried an execution id and quoted log lines, Drill B
+> carried the words "completed by the operator" and nothing else. **Evidence that cannot be
+> pasted is not evidence.**
+>
+> **Why Drill A cannot substitute for Drill B — this is structural, not an oversight.** The
+> dry-run guard at `infra/billing-cap/index.js:50` returns *before* `disableBilling()` at line 57.
+> Drill A therefore exercises decode, threshold compare, and the billing **read**, then stops one
+> line short of the only call that needs write permission — and passes identically whether or not
+> step 5 was ever run. A cap whose write path has never executed is untested no matter how green
+> the dry run looks. **Only Drill B touches line 57.** Treat a passing Drill A as proof of wiring
+> and nothing more.
+>
+> Gotchas folded into the setup above. From 2026-07-26: the budget flag is
+> `--notifications-rule-pubsub-topic`; the Pub/Sub service agent needs
+> `roles/iam.serviceAccountTokenCreator`; the handler must be registered via `functions.cloudEvent`
+> or the payload arrives empty. From 2026-08-04: **`roles/billing.projectManager` holds exactly
+> two permissions** (`createBillingAssignment`, `deleteBillingAssignment`) and no read at all, so
+> `isBillingEnabled()` at line 45 fails without `roles/browser`; `--service-account` also
+> repoints the **Eventarc trigger** identity, which then needs `run.invoker` and
+> `eventarc.eventReceiver` or delivery stops silently; and `infra/` lives on branch `phase-5`, not
+> `main`, so a default clone deploys nothing. Useful accident worth keeping: the sample message
+> says `edgify-hard-cap` while the live budget is still `trellis-hard-cap`, so the log line tells
+> drill traffic from real notifications at a glance.
+>
+> **Blast radius.** Detaching billing is project-scoped and takes down *everything* in the
+> project. `innovationmate` held nothing but the cap itself when this drill ran (`run services
+> list`, `functions list`, `firestore databases list` → 0 items), which is why it was safe to
+> fire. Re-confirm that before ever repeating it, and note that an armed cap on a shared project
+> will take unrelated workloads down with Edgify.
 
 > **Phase 7 follow-up:** once Cloud Run has real spend, lower the budget amount below actual
 > spend once to confirm the **email** notification also fires, then restore it.

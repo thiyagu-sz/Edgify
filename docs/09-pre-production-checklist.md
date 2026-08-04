@@ -79,12 +79,26 @@ then be served to anyone who uploads that same file.
 
 ### 1.4 Billing cannot run away
 
-- [x] GCP budget alert configured **and confirmed firing** with a test threshold — verified 2026-07-26 via a synthetic Pub/Sub budget message (Drill A: `DRY RUN: would disable billing … cost 500 > budget 50`)
-- [x] GCP budget action set to disable billing at a hard cap — verified 2026-07-26 (Drill B on `innovationmate`: real detach → `billingEnabled: false`, then re-linked → `billingEnabled: true`)
+- [x] GCP budget alert configured **and confirmed firing** with a test threshold — verified 2026-08-04, execution `e3xf2c7rii25` (Drill A: `budget_notification … dryRun=true` → `DRY RUN: would disable billing … cost 500 > budget 50`). Independently corroborated by live traffic: with a Pub/Sub topic attached the budget publishes on cost updates, so `budget_notification name=trellis-hard-cap cost=0 budget=50` appears in the function log roughly every 30 minutes
+- [x] GCP budget action set to disable billing at a hard cap — verified 2026-08-04, execution `e4dtpj8t4wjr` (Drill B on `innovationmate`: real detach → `billingAccountName: ''` / `billingEnabled: false`, then re-linked → `billingEnabled: true`). **Scope: this verifies `innovationmate` only.** Billing detach is project-scoped, so a Phase 7 deploy into any other project ships with no cap until the guardrail is rebuilt and re-drilled there
 - [x] Neon spending limit set — **N/A on the Free Plan** (2026-07-25): the free tier has no billing attached and no Usage-Limits page; it hard-stops at the free allowance rather than charging, so runaway *spend* is not possible. Revisit if the project moves to a paid Neon plan.
 - [ ] Cloud Run `--max-instances` set to a finite number
 - [ ] Per-user daily quota enforced server-side and verified at the boundary
 - [ ] OpenRouter balance is only as large as you are willing to lose
+
+> **Both GCP boxes above previously read "verified 2026-07-26", and that was not supportable.**
+> Drill B was recorded as "completed by the operator" with no execution id and no log line, while
+> the function's service account held no billing permission at all — the entire billing-account
+> policy contained one binding, to a human user — so the detach it claimed could not have
+> happened. The cap had been deployed and unable to fire for nine days behind two checked boxes.
+>
+> Two things made that possible, and both generalise past this section. **A drill that stops short
+> of the irreversible step proves only the reversible part:** Drill A returns at
+> `infra/billing-cap/index.js:50`, one line before the only call needing write access, so it passed
+> identically whether or not the permission was ever granted. And **a checked box whose evidence
+> cannot be pasted is an unchecked box that looks reassuring** — the record already showed the
+> asymmetry, an execution id for A and a form of words for B, a full week before anyone read it
+> as one.
 
 ### 1.5 Backups exist and have been restored
 
@@ -395,7 +409,8 @@ Launch only when every one of these is true:
 1. No secret reachable from the browser, and none in git history
 2. Cross-user isolation proven by automated test **and** manual probe
 3. Rendered model output cannot execute script
-4. Hard billing cap active and tested
+4. Hard billing cap active and tested **in the project Edgify actually deploys to** — detach is
+   project-scoped, so a cap drilled elsewhere protects nothing here
 5. A backup has been successfully restored
 6. Every row of the failure-injection table produces a calm user-facing state
 7. 25 concurrent users for 10 minutes with zero 5xx
