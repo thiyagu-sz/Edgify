@@ -108,6 +108,19 @@ const envSchema = z.object({
    */
   GRAPH_BUILD_BUDGET_MS: z.coerce.number().int().positive().default(200_000),
 
+  /**
+   * Comma-separated emails allowed to open the internal usage dashboard (`/admin/usage`).
+   *
+   * **Defaults to empty, which means NOBODY** — the gate fails closed. That is deliberate: the
+   * dashboard reads every user's spend, generation counts and identity across the whole tenancy,
+   * so the dangerous failure is it being accidentally open, not accidentally shut. An unset
+   * variable in production must lock everyone out rather than let everyone in.
+   *
+   * A session alone is NOT sufficient authorisation here. Every other page in the app shows the
+   * caller their own data; this one shows them everyone's.
+   */
+  ADMIN_EMAILS: z.string().default(""),
+
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),

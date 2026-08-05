@@ -180,6 +180,34 @@ const WRITER_ALLOWLIST = [
  */
 const CONTENT_ADDRESSED_ALLOWLIST = ["graphs.cloneGraphByContentHash"];
 
+/**
+ * Fleet-wide aggregates for the internal usage dashboard. These read ACROSS ALL USERS and have no
+ * tenant scope at all — that is the feature, and it is why they get their own list.
+ *
+ * NOT folded into `CONTENT_ADDRESSED_ALLOWLIST`, even though both are "reads across users",
+ * because the two are sound for opposite reasons and merging them would launder the weaker
+ * argument through the stronger one:
+ *
+ *  - `cloneGraphByContentHash` is SELF-AUTHORISING. Reaching another user's graph requires
+ *    supplying a document that hashes identically, which means already holding it. Nothing is
+ *    enumerable and the gate is the data itself.
+ *  - These are NOT self-authorising in any way. Anyone who calls them gets the whole tenancy. The
+ *    only thing preventing a leak is `lib/admin.ts` refusing non-admins at the page — an EXTERNAL
+ *    gate, in different code, that this list cannot verify.
+ *
+ * So the coverage they need is different in kind: not "prove user B sees nothing" (they cannot),
+ * but "prove the gate holds and that nothing merely session-gated calls them". That lives in
+ * `app/(app)/admin/usage/admin-gate.test.ts` and the assertion below.
+ */
+const ADMIN_AGGREGATE_ALLOWLIST = [
+  "usage-admin.usageByUser",
+  "usage-admin.tierBreakdown",
+  "usage-admin.outcomeBreakdown",
+  "usage-admin.dailySpend",
+  "usage-admin.usageByModel",
+  "usage-admin.quotaUsedToday",
+];
+
 describe("cross-user isolation: documents", () => {
   it("getDocument: owner sees the row; the other user sees nothing", async () => {
     const doc = await seed(A);
@@ -261,11 +289,60 @@ describe("cross-user isolation: documents", () => {
       ...CASE_NAMES,
       ...WRITER_ALLOWLIST,
       ...CONTENT_ADDRESSED_ALLOWLIST,
+      ...ADMIN_AGGREGATE_ALLOWLIST,
     ]);
     const uncovered = exported.filter((n) => !covered.has(n));
     expect(
       uncovered,
       `Query functions with no isolation coverage — add a case in isolation.integration.test.ts:\n${uncovered.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * The admin allowlist is the one that cannot be verified from inside this file, so pin the thing
+   * that CAN be: nothing outside the dashboard's own page may import that module.
+   *
+   * These functions have no tenant scope, so a single `import` from a route that is merely
+   * session-gated turns every signed-in user into a reader of the whole fleet's spend and
+   * identities. There is no query-level assertion that would catch it — the query would do exactly
+   * what it says. A structural check is the only kind available.
+   */
+  it("nothing outside the admin dashboard imports the fleet-wide aggregates", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const root = process.cwd();
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name === ".next") continue;
+          walk(rel);
+        } else if (/\.tsx?$/.test(entry.name)) {
+          files.push(rel);
+        }
+      }
+    };
+    for (const dir of ["app", "components", "lib"]) walk(dir);
+
+    const ALLOWED = [
+      "app/(app)/admin/usage/", // the dashboard page itself
+      "components/admin/", // its presentation, which takes the rows as props
+      "lib/db/queries/usage-admin", // the module and its own tests
+    ];
+
+    const importers = files.filter((rel) => {
+      if (ALLOWED.some((prefix) => rel.startsWith(prefix))) return false;
+      const src = readFileSync(join(root, rel), "utf8");
+      return /from\s+["'][^"']*queries\/usage-admin["']/.test(src);
+    });
+
+    expect(
+      importers,
+      "these import the fleet-wide usage aggregates but are not the admin dashboard. Every one " +
+        "of them exposes every user's spend and identity to whoever can reach it:\n" +
+        importers.join("\n"),
     ).toEqual([]);
   });
 });

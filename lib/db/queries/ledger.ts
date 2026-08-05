@@ -39,7 +39,16 @@ export async function recordLedger(
       tier: entry.tier,
       tokensIn: entry.tokensIn ?? 0,
       tokensOut: entry.tokensOut ?? 0,
-      costMicros: entry.costMicros ?? 0,
+      /**
+       * `null`, NOT `0`, when the caller does not supply a cost.
+       *
+       * This defaulted to `0` and that was the silent half of the cost defect: an unpriced or
+       * unsupplied cost was indistinguishable from a genuinely free call, so `sum(cost_micros)`
+       * under-reported without anything looking wrong. The two now mean different things —
+       * `0` is "this really cost nothing" (cache, demo, a `:free` model) and `null` is "we do not
+       * know", which the dashboard shows as unpriced rather than folding into the total.
+       */
+      costMicros: entry.costMicros ?? null,
       latencyMs: entry.latencyMs ?? null,
       outcome: entry.outcome,
     });

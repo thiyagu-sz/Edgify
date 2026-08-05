@@ -15,6 +15,7 @@ import {
   type RunModelResult,
   type RunStream,
 } from "./models";
+import { costMicrosFor } from "./pricing";
 import {
   buildConceptDetailPrompt,
   buildGraphPrompt,
@@ -377,6 +378,9 @@ export async function generate(
       outcome: "ok",
       tokensIn: 0,
       tokensOut: 0,
+      // Explicitly zero, not merely unset: a cache hit genuinely cost nothing, which is a
+      // different fact from `null` ("unpriced model") and must not be confused with it.
+      costMicros: 0,
       latencyMs: elapsed(),
     });
     return { data: cached, tier: "cache", notice: null, modelId: null };
@@ -441,6 +445,9 @@ export async function generate(
             tier: step.tier,
             tokensIn: result.tokensIn,
             tokensOut: result.tokensOut,
+            // The only two places in the system that can spend money are here and `commitStream`.
+            // Priced at record time so the row carries the rate that applied then (lib/ai/pricing).
+            costMicros: costMicrosFor(step.modelId, result.tokensIn, result.tokensOut),
             outcome,
             latencyMs: elapsed(),
           }),
@@ -557,6 +564,9 @@ export async function generateNotesStream(
       outcome: "ok",
       tokensIn: 0,
       tokensOut: 0,
+      // Explicitly zero, not merely unset: a cache hit genuinely cost nothing, which is a
+      // different fact from `null` ("unpriced model") and must not be confused with it.
+      costMicros: 0,
       latencyMs: elapsed(),
     });
     return { kind: "final", data: cached, tier: "cache", notice: null };
@@ -685,6 +695,9 @@ async function* commitStream(args: {
       tier: args.tier,
       tokensIn: tokens.tokensIn,
       tokensOut: tokens.tokensOut,
+      // Streaming's usage arrives only once the stream drains, so this is the first point the
+      // cost of a streamed generation can be known at all.
+      costMicros: costMicrosFor(args.modelId, tokens.tokensIn, tokens.tokensOut),
       outcome: args.outcome,
       latencyMs: args.elapsed(),
     }),
@@ -764,6 +777,7 @@ async function serveDemo(
       operation: input.operation,
       tier: "demo",
       outcome: "demo",
+      costMicros: 0, // curated content, no model call
       latencyMs: elapsed(),
     });
     return { data: demo, tier: "demo", notice, modelId: null };
@@ -782,6 +796,7 @@ async function serveDemo(
     operation: input.operation,
     tier: "demo",
     outcome: "failed",
+    costMicros: 0, // the ladder produced nothing to charge for
     latencyMs: elapsed(),
   });
   throw budgetExceeded ? new GenerationBudgetExceededError() : new ServiceBusyError();

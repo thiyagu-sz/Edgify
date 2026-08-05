@@ -35,6 +35,7 @@ missing or malformed value rather than fail mysteriously at request time.
 | `RATE_LIMIT_MAX` | `30` | Default per-route ceiling; routes override (docs/06 Phase 2) |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | |
 | `GRAPH_BUILD_BUDGET_MS` | `200000` | Wall-clock budget for one graph build. **Coupled to `--timeout` below** (docs/09 §1.6) |
+| `ADMIN_EMAILS` | *(empty — nobody)* | Comma-separated emails allowed to open `/admin/usage`. **Fails closed:** unset authorises nobody, including in dev. A session is authentication; this is authorisation, and that page shows every user's spend and identity rather than the caller's own |
 | `SENTRY_DSN` | *(unset)* | Empty string is treated as unset, so dev still boots |
 | `NEXT_PUBLIC_SENTRY_DSN` | *(unset)* | A DSN is a public ingestion key, not a secret — this prefix is deliberate and safe |
 | `NODE_ENV` | `development` | Set `production` in the image |
