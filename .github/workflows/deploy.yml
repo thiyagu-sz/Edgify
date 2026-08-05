@@ -1,0 +1,116 @@
+# Deploy to Cloud Run. Only `main` reaches this workflow.
+#
+# Ordering is the whole design: `verify` must pass before `deploy` runs (`needs: verify`), and
+# migrations run as an EXPLICIT step before the new revision is created — never on application
+# boot. Two containers starting at once and both migrating is a bad afternoon (docs/07).
+#
+# NOT YET RUN. The secrets below do not exist until the Phase 7 GCP setup is done, so this
+# workflow fails at the auth step rather than deploying anything half-configured. That is the
+# intended state: the file is reviewable before it has ever had credentials.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  # Manual re-deploy of the current main — e.g. rolling forward after a fixed config problem.
+  workflow_dispatch:
+
+# Never let two deploys race. `cancel-in-progress: false` because cancelling a run mid-MIGRATION
+# is how you get a half-migrated database (docs/09 §3.5); let it finish and queue the next.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # Identical gate to ci.yml. Duplicated deliberately rather than shared: a deploy that trusts a
+  # verification it did not run itself is a deploy that ships whatever the last green run was.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          DATABASE_URL: postgresql://localhost:5432/build
+          BETTER_AUTH_SECRET: ci-build-placeholder-secret-0000000000
+          BETTER_AUTH_URL: http://localhost:3000
+          GOOGLE_CLIENT_ID: ci-build-placeholder
+          GOOGLE_CLIENT_SECRET: ci-build-placeholder
+          OPENROUTER_API_KEY: ci-build-placeholder
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Attach a GitHub Environment so a required reviewer can gate production from the repo
+    # settings. Nothing here enforces that on its own — configure it once in Settings →
+    # Environments, and this line is what makes the deploy respect it.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      # Workload Identity Federation, NOT a downloaded service-account JSON key. A JSON key in
+      # GitHub secrets is a long-lived credential that cannot be rotated easily (docs/07).
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Explicit migration step, before the new revision exists. A failure here stops the deploy
+      # and leaves the current revision serving — which is the point (docs/09 §3.5).
+      - name: Run migrations
+        run: npx drizzle-kit migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: edgify
+          source: .
+          region: asia-south1
+          # Secrets come from Secret Manager, never --set-env-vars: plaintext in the service
+          # config is visible to anyone with console read access (docs/07).
+          secrets: |
+            DATABASE_URL=edgify-db-url:latest
+            OPENROUTER_API_KEY=edgify-openrouter:latest
+            BETTER_AUTH_SECRET=edgify-auth-secret:latest
+            GOOGLE_CLIENT_ID=edgify-google-client-id:latest
+            GOOGLE_CLIENT_SECRET=edgify-google-client-secret:latest
+          # --max-instances is a HARD BLOCKER in docs/09 §1.4, and the reasoning there is worth
+          # repeating because it is counter-intuitive: the billing cap bounds total spend AFTER
+          # the fact (budget notifications lag by hours), so max-instances is the only thing
+          # bounding the RATE. A runaway with unlimited concurrency outspends a budget that
+          # updates a few times an hour.
+          #
+          # --timeout 300 is COUPLED to GRAPH_BUILD_BUDGET_MS (docs/09 §1.6). The budget must stay
+          # comfortably below this number; the gap is what pays for writing status="failed" and
+          # returning a response. Change one and change the other.
+          flags: >-
+            --allow-unauthenticated
+            --min-instances=0
+            --max-instances=5
+            --concurrency=40
+            --cpu=1
+            --memory=1Gi
+            --timeout=300
+          env_vars: |
+            NODE_ENV=production
+            BETTER_AUTH_URL=${{ secrets.BETTER_AUTH_URL }}
+            GRAPH_BUILD_BUDGET_MS=200000

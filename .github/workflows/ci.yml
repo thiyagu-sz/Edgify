@@ -1,0 +1,74 @@
+# Verification on every push and pull request.
+#
+# This is the same four commands AGENTS.md requires before calling a phase done — typecheck, lint,
+# test, build — run somewhere that cannot be skipped. It is deliberately SEPARATE from deploy.yml:
+# this workflow needs no cloud credentials and no secrets, so it runs on forks and on every branch,
+# while anything that can reach production stays in a workflow that only main can trigger.
+name: ci
+
+on:
+  push:
+    branches-ignore: [main] # main is covered by deploy.yml's verify job — don't pay twice
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # package.json engines: >=22
+          cache: npm
+
+      # `npm ci` and not `npm install`: it installs exactly the committed lockfile and fails if
+      # package.json and the lockfile disagree (docs/09 §2.5).
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+
+      # Runs all three vitest projects. The integration project starts a real Postgres via
+      # testcontainers, which needs a Docker daemon — ubuntu-latest ships one, so no service
+      # container is declared here. If this job ever moves to a runner without Docker, the
+      # integration project fails at global setup rather than silently skipping.
+      - run: npm test
+
+      # Build last: it is the slowest step and the one most likely to be fixed by the others.
+      - run: npm run build
+        env:
+          # `next build` evaluates modules that read the environment, and lib/env.ts validates at
+          # import — so the build needs values for every REQUIRED variable or it aborts with an
+          # error naming none of them (the Phase 1 finding; test/dockerfile-env.test.ts pins it).
+          # These are placeholders, never real credentials: nothing here is deployed or connected
+          # to, and CI holds no secrets by design.
+          DATABASE_URL: postgresql://localhost:5432/build
+          BETTER_AUTH_SECRET: ci-build-placeholder-secret-0000000000
+          BETTER_AUTH_URL: http://localhost:3000
+          GOOGLE_CLIENT_ID: ci-build-placeholder
+          GOOGLE_CLIENT_SECRET: ci-build-placeholder
+          OPENROUTER_API_KEY: ci-build-placeholder
+
+      # AGENTS.md rule 1, the single most important rule in the repository. The pre-commit scan
+      # looks at a staged diff; this looks at the BUILT CLIENT BUNDLE, which is the artefact that
+      # actually reaches a browser. Values, not identifier names — `BETTER_AUTH_SECRET` appears in
+      # the bundle as the name of a lazy accessor and is a known false positive (docs/09 §1.1).
+      - name: No API key in the client bundle
+        run: |
+          if grep -rIn "sk-or-v1-[A-Za-z0-9_-]\{20,\}" .next/static/; then
+            echo "::error::OpenRouter key found in the client bundle — DO NOT DEPLOY"
+            exit 1
+          fi
+          if grep -rIn "NEXT_PUBLIC_[A-Z_]*\(OPENROUTER\|API_KEY\|SECRET\)" \
+              --include=*.ts --include=*.tsx . ; then
+            echo "::error::a secret is exposed under a NEXT_PUBLIC_ prefix"
+            exit 1
+          fi
+          echo "clean"

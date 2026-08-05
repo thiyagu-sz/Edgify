@@ -116,6 +116,38 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 /**
+ * Every variable name this schema declares, derived from the schema itself.
+ *
+ * Exported for `test/deploy-env-docs.test.ts`, which checks docs/07's Secret Manager table against
+ * it. Deriving from `Object.keys(parseEnv(...))` instead would be subtly WRONG: an optional
+ * variable with no default (`SENTRY_DSN`) is absent from the parsed result when unset, so it would
+ * look undeclared and the doc listing it would be reported as a phantom. The schema shape is the
+ * only complete answer.
+ */
+export function envVarNames(): string[] {
+  return Object.keys(envSchema.shape).sort();
+}
+
+/**
+ * The subset with no default and no optionality — the ones whose absence stops the app at boot.
+ *
+ * The distinction is worth exporting because the two failure modes are opposite. A missing
+ * REQUIRED variable is loud: `assertEnv()` throws naming it and `instrumentation.ts` exits 1. A
+ * misspelled OPTIONAL one is SILENT: nothing rejects the unknown name, the default applies, and
+ * the operator sees a setting they believe they configured. docs/07 splits its Secret Manager
+ * table on exactly this line, and `test/deploy-env-docs.test.ts` checks that split against here.
+ *
+ * Derived by asking each field whether it accepts `undefined`, rather than by listing names — a
+ * list would be the third copy that goes stale, which is the failure this whole check exists for.
+ */
+export function requiredEnvVarNames(): string[] {
+  return envVarNames().filter(
+    (name) =>
+      !envSchema.shape[name as keyof typeof envSchema.shape].safeParse(undefined).success,
+  );
+}
+
+/**
  * Validate a raw environment record. Pure and side-effect free — the unit tests call this
  * directly. Throws an Error whose message names every offending variable.
  */
