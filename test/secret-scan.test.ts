@@ -120,7 +120,7 @@ describe("secret scan: ignores documentation placeholders", () => {
  */
 describe("secret scan: the documented baseline", () => {
   it("still flags the .env.example placeholder, deliberately", () => {
-    const line = `DATABASE_URL="postgresql://user:password@ep-xxxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require"`;
+    const line = `DATABASE_URL="postgresql://user:password@ep-xxxx-pooler.REGION.aws.neon.tech/neondb?sslmode=verify-full"`;
     expect(scan(line)).toBe(true);
   });
 

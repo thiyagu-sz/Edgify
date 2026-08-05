@@ -39,6 +39,60 @@ describe("parseEnv", () => {
     expect(() => parseEnv(raw)).toThrow(/DATABASE_URL/);
   });
 
+  /**
+   * SSL modes that are safe TODAY and weaken on a dependency upgrade (added 2026-08-05).
+   *
+   * pg 8.x treats `prefer`, `require` and `verify-ca` as aliases for `verify-full`, so the
+   * certificate is verified and the connection is sound. pg 9 gives them libpq semantics, where
+   * `require` means "encrypt but do not verify the peer" — so a routine `npm update` would drop
+   * certificate verification on the user-data database with no code change, no error and no
+   * warning at the moment it took effect.
+   *
+   * This is not hypothetical drift: `.env.local` carried `sslmode=require` for weeks after
+   * commit 2698f69 pinned `verify-full` everywhere the commit could reach. It could not reach a
+   * gitignored file, and nothing detected the gap until Node printed a deprecation warning.
+   */
+  it.each(["prefer", "require", "verify-ca"])(
+    "rejects sslmode=%s, which weakens under pg 9",
+    (mode) => {
+      const raw = validEnv();
+      raw.DATABASE_URL = `postgresql://user:pass@ep-cool-pooler.neon.tech/neondb?sslmode=${mode}`;
+      expect(() => parseEnv(raw)).toThrow(/sslmode/i);
+    },
+  );
+
+  it("accepts sslmode=verify-full", () => {
+    const raw = validEnv();
+    raw.DATABASE_URL = "postgresql://user:pass@ep-cool-pooler.neon.tech/neondb?sslmode=verify-full";
+    expect(() => parseEnv(raw)).not.toThrow();
+  });
+
+  it("accepts a URL with no sslmode, where the client's rejectUnauthorized fallback applies", () => {
+    // Omitting the mode is SAFE — lib/db/client.ts supplies `rejectUnauthorized: true` and the URL
+    // does not override it. Rejecting this too would be wrong, and would break every localhost and
+    // testcontainer connection string in the suite.
+    const raw = validEnv();
+    raw.DATABASE_URL = "postgresql://user:pass@ep-cool-pooler.neon.tech/neondb";
+    expect(() => parseEnv(raw)).not.toThrow();
+  });
+
+  it("finds the mode when it is not the first query parameter", () => {
+    // `[?&]` in the pattern, not `?` — a connection string usually carries several parameters and
+    // a check that only looked at the first would miss the real one in production.
+    const raw = validEnv();
+    raw.DATABASE_URL =
+      "postgresql://user:pass@ep-cool-pooler.neon.tech/neondb?application_name=edgify&sslmode=require";
+    expect(() => parseEnv(raw)).toThrow(/sslmode/i);
+  });
+
+  it("does not fire on a mode that merely starts the same way", () => {
+    // `verify-full` contains no `require`, but a sloppy pattern matching `verify-ca` as a prefix of
+    // `verify-can-something` would be a false positive that blocks a valid boot.
+    const raw = validEnv();
+    raw.DATABASE_URL = "postgresql://user:pass@host.neon.tech/db?sslmode=verify-full&x=require";
+    expect(() => parseEnv(raw)).not.toThrow();
+  });
+
   it("rejects a malformed BETTER_AUTH_URL", () => {
     const raw = validEnv();
     raw.BETTER_AUTH_URL = "not-a-url";

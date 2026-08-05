@@ -47,6 +47,33 @@ const envSchema = z.object({
     .min(1, "required — Neon pooled connection string")
     .refine((v) => v.startsWith("postgres://") || v.startsWith("postgresql://"), {
       message: "must be a postgres:// or postgresql:// connection string",
+    })
+    /**
+     * Reject the SSL modes that are about to get WEAKER (added 2026-08-05).
+     *
+     * In pg 8.x, `prefer`, `require` and `verify-ca` are all treated as aliases for `verify-full`,
+     * so the certificate IS verified and the connection is safe today. In pg 9 /
+     * pg-connection-string 3.0 they adopt standard libpq semantics, where `require` means
+     * "encrypt, but do not verify who you are talking to". The connection would silently weaken on
+     * a routine dependency bump — no code change, no error, and no warning at the moment it
+     * happens. This is the user-data database, so encryption without authentication is not enough.
+     *
+     * `lib/db/client.ts` already documented this as a latent footgun and commit 2698f69 pinned
+     * `verify-full` "across app and e2e scripts" — but `.env.local` is gitignored, so that pin
+     * could never reach the one file that actually configures a running app. It drifted there and
+     * stayed `require` until Node's own deprecation warning surfaced it. Documenting a security
+     * property does not enforce it; this does.
+     *
+     * Omitting `sslmode` entirely is still fine: with no mode in the URL, `lib/db/client.ts`'s
+     * `rejectUnauthorized: true` applies, which is the same guarantee. Only the modes that
+     * OVERRIDE that fallback with something about to weaken are rejected.
+     */
+    .refine((v) => !/[?&]sslmode=(prefer|require|verify-ca)\b/i.test(v), {
+      message:
+        "must not use sslmode=prefer, require or verify-ca. These alias to verify-full in pg 8.x " +
+        "but adopt weaker libpq semantics in pg 9, dropping certificate verification silently on a " +
+        "dependency upgrade. Use sslmode=verify-full, or omit sslmode entirely so the " +
+        "rejectUnauthorized:true fallback in lib/db/client.ts applies",
     }),
   BETTER_AUTH_SECRET: z
     .string()
