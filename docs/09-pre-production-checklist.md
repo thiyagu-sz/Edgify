@@ -339,8 +339,40 @@ Uploaded documents are untrusted input that reaches a model. Treat them as data 
 >    build, so if taken this route **must be load-tested through the Docker image specifically**
 >    (build succeeds, image optimisation works, no runtime `sharp` load error), not just locally.
 >
-> - [ ] **Phase 7 gate:** Group 1 cleared via option 1, or via option 2 with a passing Docker
->       build + load test. Re-run `npm audit --omit=dev` and confirm zero high/critical.
+> - [x] **Phase 7 gate: CLEARED 2026-08-05 via option 1, the preferred path.** `npm audit
+>       --omit=dev` reports **zero high or critical** in the production tree.
+>
+>       **16.3 left `preview` and became the stable `latest` tag**, which is the only thing that
+>       had been blocking option 1 — the decision itself was already made above. `next@16.3.0`
+>       pins `postcss 8.5.23` (threshold `>=8.5.18`) and `sharp ^0.35.3` (threshold `>=0.35.0`),
+>       clearing all three Group 1 advisories in one bump **with no `overrides`**. Option 2's
+>       specific risk — swapping a native module and breaking the Docker build — was therefore
+>       never taken on.
+>
+>       **The recorded state had drifted, which is the reason to re-measure rather than re-read.**
+>       This section listed three highs from 2026-07-25; the tree actually had **10 findings (5
+>       high, 5 moderate)**, including a fourth postcss advisory that post-dated the table
+>       ([GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp), an incomplete
+>       fix of GHSA-6g55-p6wh-862q). An advisory table is a snapshot, and this one was eleven days
+>       stale — always re-run the audit before trusting it.
+>
+>       Two further highs that appeared since (`brace-expansion` DoS, `fast-uri` host confusion)
+>       were cleared by a plain `npm audit fix` — no `--force`, no breaking change.
+>
+>       Verified on the upgrade: typecheck, lint and build clean, **829 tests / 59 files pass**.
+>
+> **Accepted, and deliberately NOT fixed — 5 moderate, all one chain:**
+> `esbuild <=0.24.2` ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)),
+> reached as `better-auth → drizzle-kit → @esbuild-kit/esm-loader → @esbuild-kit/core-utils →
+> esbuild`.
+>
+> The advisory is that **esbuild's development server** will answer cross-origin requests. Two
+> reasons this is accepted rather than gated: nothing in that chain runs on the request path — it
+> is the loader drizzle-kit uses to execute TypeScript config during migrations — and the only
+> offered fix is `drizzle-kit@0.18.1`, a **breaking downgrade** from the 0.31.x this project's
+> migrations are written against. Trading working migrations for a dev-server advisory in a tool
+> that never serves anything is the wrong trade. Revisit when `better-auth` or `drizzle-kit`
+> updates its loader dependency; neither is under our control.
 
 ### 2.6 Information disclosure
 
