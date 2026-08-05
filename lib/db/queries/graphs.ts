@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { db, withDbRetry } from "../client";
 import { concepts, documents, edges, graphs } from "../schema";
 
@@ -106,13 +106,16 @@ export async function getLatestGraph(userId: string): Promise<Graph | undefined>
  *  - CORRUPTION is fully closed. Two simultaneous builds can never produce duplicate concepts,
  *    duplicate edges, or a `ready` graph with a partial node set. A re-fire after the build has
  *    finished is a no-op, and cannot overwrite a finished graph.
- *  - SPEND has a bounded accepted window: at most ONE wasted model call, only when two builds for
- *    the same graph are genuinely simultaneous (both passed the route's `status === "processing"`
- *    pre-check before either committed). The loser discovers it lost only here, after its model
- *    call. Closing that too would need a `building` claim status, which docs/03 does not define —
- *    the four statuses there are exhaustive and `demo` is reserved. The waste is bounded by the
- *    per-user daily quota and the client fires the build once, so the window is accepted rather
- *    than papered over with a schema change.
+ *  - SPEND used to have a bounded accepted window here — at most one wasted model call when two
+ *    builds were genuinely simultaneous, the loser discovering it lost only at this point, after
+ *    its model call. **CLOSED 2026-08-05 by `claimGraphBuild`**, which claims the row before the
+ *    ladder runs, so the loser now returns without spending.
+ *
+ *    The old note said closing it would need a `building` claim status "which docs/03 does not
+ *    define — the four statuses there are exhaustive". That was sound but incomplete: a nullable
+ *    claim TIMESTAMP does the same work as a claim STATUS, and leaves the four statuses
+ *    exhaustive because it is not one of them. The window was framed as a status problem because
+ *    the guard in front of it was a status check.
  */
 export async function finishGraph(
   userId: string,
@@ -148,6 +151,89 @@ export async function finishGraph(
       return true;
     }),
   );
+}
+
+/**
+ * Claim this graph's build before spending anything on it (docs/09 §1.6).
+ *
+ * WHAT THIS FIXES. The route's `status === "processing"` pre-check distinguishes FINISHED from
+ * UNFINISHED, not LIVE from ABANDONED — and nothing in the schema recorded which a `processing`
+ * row was. `createdAt` cannot answer it: the row is created at upload, before the client fires the
+ * build, so an old `createdAt` says nothing about whether anything is still running.
+ *
+ * `buildStartedAt IS NULL` is the claim condition, so exactly ONE build can ever take a given row.
+ * Two consequences:
+ *
+ *  - An abandoned row is never silently rebuilt. Reclaiming it would re-spend, which is the
+ *    expensive consequence of `ZOMBIE-PROCESSING-ROW`; `reapAbandonedGraph` retires it instead.
+ *  - IT ALSO CLOSES THE ACCEPTED SPEND WINDOW recorded on `finishGraph` below. Two genuinely
+ *    simultaneous builds used to both pass the route's pre-check and both call the model, with the
+ *    loser discovering it lost only afterwards. Now the loser fails its claim and returns BEFORE
+ *    the model call. That window is closed without a `building` status, so docs/03's four statuses
+ *    stay exhaustive.
+ *
+ * Returns false when the graph is missing, not the caller's, no longer `processing`, or already
+ * claimed by another build.
+ */
+export async function claimGraphBuild(
+  userId: string,
+  graphId: string,
+): Promise<boolean> {
+  return withDbRetry(async () => {
+    const rows = await db
+      .update(graphs)
+      .set({ buildStartedAt: new Date() })
+      .where(
+        and(
+          eq(graphs.id, graphId),
+          eq(graphs.userId, userId),
+          eq(graphs.status, "processing"),
+          isNull(graphs.buildStartedAt),
+        ),
+      )
+      .returning({ id: graphs.id });
+    return rows.length > 0;
+  });
+}
+
+/**
+ * Retire a build that was claimed and never finished — the backstop for the case the wall-clock
+ * budget cannot cover, where the process itself is gone (crash, instance eviction, `kill -9`) and
+ * so nothing ran to write `failed`.
+ *
+ * Without this the row stays `processing` FOREVER: the poll reports `processing` indefinitely, so
+ * the never-fail promise (docs/04) becomes never-RESOLVE — a worse failure than an honest error,
+ * because nothing surfaces it.
+ *
+ * `staleBefore` must sit ABOVE the wall-clock budget, or this races the very builds it backs up
+ * and marks a legitimately slow one `failed` underneath itself. `buildStartedAt IS NOT NULL` is
+ * required: a null claim means no build ever ran, which is a graph waiting to be built, not an
+ * abandoned one — and reaping those would fail every upload whose client had not yet fired.
+ *
+ * Conditional on `processing` for the same reason as `failGraph`: this must never overwrite a
+ * graph that has since gone `ready`.
+ */
+export async function reapAbandonedGraph(
+  userId: string,
+  graphId: string,
+  staleBefore: Date,
+): Promise<boolean> {
+  return withDbRetry(async () => {
+    const rows = await db
+      .update(graphs)
+      .set({ status: "failed", failureReason: "build abandoned — no result within the budget" })
+      .where(
+        and(
+          eq(graphs.id, graphId),
+          eq(graphs.userId, userId),
+          eq(graphs.status, "processing"),
+          isNotNull(graphs.buildStartedAt),
+          lt(graphs.buildStartedAt, staleBefore),
+        ),
+      )
+      .returning({ id: graphs.id });
+    return rows.length > 0;
+  });
 }
 
 /**

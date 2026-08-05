@@ -52,8 +52,26 @@ One knowledge graph per document.
 | `promptVersion` | text, not null | |
 | `modelId` | text, not null | |
 | `createdAt` | timestamptz | |
+| `buildStartedAt` | timestamptz, nullable | When a build claimed this row. Null = never claimed. Added 2026-08-05, docs/09 §1.6 |
 
 Indexes: `(userId, createdAt desc)`, `(documentId)`
+
+> **Why `buildStartedAt` exists, when `createdAt` looks like it would do.** It is the only thing
+> that distinguishes a **live** build from an **abandoned** one, and `createdAt` cannot: the row is
+> created at upload, *before* the client fires the build, so an old `createdAt` says nothing about
+> whether anything is still running. Reaping on `createdAt` would kill uploads whose build had not
+> been fired yet.
+>
+> It carries two guarantees, both conditional UPDATEs in `lib/db/queries/graphs.ts`. Claiming on
+> `buildStartedAt IS NULL` means exactly one build can ever take a row — which closes the
+> Phase 5 double-spend window without adding a `building` status, so the four statuses above stay
+> exhaustive. And `NOT NULL AND < cutoff` identifies a build that was claimed and never finished,
+> which is what the reaper retires.
+
+Not indexed, deliberately: both guards read a single row by `(id, userId)`, which the primary key
+already serves. An index here would only pay for a background reaper scanning for stale rows, and
+there is none — the retirement happens lazily on the poll and build routes, where somebody is
+actually waiting for the answer.
 
 > **`status = "demo"` is reserved for the Phase 6 `/demo` route, and is never written by the
 > authenticated build path.** Decided 2026-07-29.

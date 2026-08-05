@@ -12,6 +12,7 @@ import {
   realRunStream,
   type RunModel,
   type RunModelArgs,
+  type RunModelResult,
   type RunStream,
 } from "./models";
 import {
@@ -43,6 +44,34 @@ export class ServiceBusyError extends Error {
   constructor() {
     super("Server is busy, please try again in a moment.");
     this.name = "ServiceBusyError";
+  }
+}
+
+/**
+ * The ladder was abandoned because it ran out of WALL CLOCK, not because it ran out of rungs
+ * (docs/09 §1.6, `LADDER-EXCEEDS-TIMEOUT`).
+ *
+ * Extends `ServiceBusyError` deliberately: to the user these are the same event — the calm tier-6
+ * outcome — and every existing `instanceof ServiceBusyError` check keeps working unchanged. The
+ * subclass exists so the CALLER can record which one happened in `graphs.failureReason`, which is
+ * internal and never rendered. Distinguishing them matters operationally: "the ladder exhausted
+ * every model" and "we ran out of time before the ladder could" call for opposite responses.
+ */
+export class GenerationBudgetExceededError extends ServiceBusyError {
+  constructor() {
+    super();
+    this.name = "GenerationBudgetExceededError";
+  }
+}
+
+/**
+ * Internal marker: this call, or this ladder, has no time left. Never escapes the module — the
+ * ladder catches it and converts it to the demo/busy tail so the ledger row is still written.
+ */
+class BudgetExhaustedError extends Error {
+  constructor() {
+    super("Wall-clock budget exhausted");
+    this.name = "BudgetExhaustedError";
   }
 }
 
@@ -195,10 +224,34 @@ export type GenerateDeps = {
   runModel?: RunModel;
   /** Streaming seam for markdown Quick Notes (generateNotesStream). Injected in tests. */
   runStream?: RunStream;
-  sleep?: (ms: number) => Promise<void>;
+  /** Waits, ADVANCING wall clock. The optional signal cancels a wait nobody is listening for. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
   random?: () => number;
   demoFor?: (input: DemoInput) => unknown | null;
+  /**
+   * Fires when a single model call has consumed the remaining wall-clock budget.
+   *
+   * Separate from `sleep` because on a simulated clock the two mean OPPOSITE things: `sleep`
+   * advances time (a backoff genuinely waits), while this OBSERVES time reaching a point. Sharing
+   * one seam would make the deadline timer itself push the clock forward, so arming a deadline
+   * would consume the very budget it is measuring. Injected so the stalled-call case is provable
+   * without a 200-second test.
+   */
+  deadline?: (ms: number, signal: AbortSignal) => Promise<void>;
+};
+
+/** Per-call options, distinct from the injectable `deps` (which exist for tests). */
+export type GenerateOptions = {
+  /**
+   * Wall-clock budget for the entire ladder walk, in milliseconds. Omitted → unbounded, which is
+   * the Quick Notes behaviour: that path is short-lived and the CLIENT owns a 45s deadline.
+   *
+   * The graph build passes one because it is the longest operation in the product and has no
+   * deadline of its own, so without this the ladder can outlive the platform request timeout and
+   * be killed mid-flight — which writes nothing and strands the row on `processing` (docs/09 §1.6).
+   */
+  budgetMs?: number;
 };
 
 /**
@@ -213,19 +266,105 @@ export type NotesStreamResult =
   | { kind: "final"; data: unknown; tier: GenerateResult["tier"]; notice: GenerateNotice }
   | { kind: "stream"; tier: "free" | "paid"; textStream: AsyncIterable<string> };
 
-const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const defaultSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    // A backoff nobody is waiting for any more (the budget ran out mid-wait) must not hold a
+    // timer open for the rest of the budget.
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+
+/**
+ * The default deadline: a plain timer, cleared when the call it was guarding finishes first.
+ * Deliberately never resolves after being cancelled — the race it belongs to has already settled.
+ */
+const defaultDeadline = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  });
+
+/**
+ * The wall-clock budget for one ladder walk. `bounded` is false for Quick Notes, where every check
+ * below compiles away to a no-op and behaviour is exactly what Phase 3 proved.
+ */
+type Budget = {
+  bounded: boolean;
+  /** Milliseconds left. `Infinity` when unbounded. */
+  remaining: () => number;
+  /** No time left to START new work. */
+  spent: () => boolean;
+};
+
+/**
+ * Run one model call, cancelling it if the budget runs out first.
+ *
+ * THE DEADLINE IS ARMED BEFORE THE CALL STARTS, not after: a call that stalls immediately must
+ * still be cut off, and arming afterwards would leave a window where nothing is watching.
+ */
+async function callWithinBudget(
+  runModel: RunModel,
+  call: RunModelArgs,
+  budget: Budget,
+  deadline: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<RunModelResult> {
+  if (!budget.bounded) return runModel(call);
+
+  const left = budget.remaining();
+  if (left <= 0) throw new BudgetExhaustedError();
+
+  const cancelCall = new AbortController();
+  const cancelDeadline = new AbortController();
+
+  /**
+   * The deadline REJECTS rather than resolving, so the race has one result type and the winner
+   * needs no sentinel to identify it. If the call wins, this promise is never settled at all —
+   * `cancelDeadline` clears its timer — so it cannot produce a stray rejection afterwards.
+   */
+  const deadline$ = deadline(left, cancelDeadline.signal).then<RunModelResult>(() => {
+    cancelCall.abort();
+    throw new BudgetExhaustedError();
+  });
+
+  const call$ = runModel({ ...call, signal: cancelCall.signal });
+  /**
+   * The LOSER of the race still rejects — an aborted provider call throws — and nothing would be
+   * awaiting it. That is the unhandled-rejection class of bug measured in Phase 4 (seven per
+   * failed generation, a process-stability risk on Cloud Run, not just log noise), so the
+   * rejection is marked handled here rather than left to the runtime.
+   */
+  call$.catch(() => {});
+
+  try {
+    return await Promise.race([call$, deadline$]);
+  } finally {
+    cancelDeadline.abort();
+  }
+}
 
 export async function generate(
   input: GenerateInput,
   deps: GenerateDeps = {},
+  options: GenerateOptions = {},
 ): Promise<GenerateResult> {
   const runModel = deps.runModel ?? realRunModel;
   const sleep = deps.sleep ?? defaultSleep;
+  const deadline = deps.deadline ?? defaultDeadline;
   const random = deps.random ?? Math.random;
   const now = deps.now ?? Date.now;
   const demoFor = deps.demoFor ?? demoContentFor;
   const started = now();
   const elapsed = () => now() - started;
+
+  const budgetMs = options.budgetMs ?? Number.POSITIVE_INFINITY;
+  const budget: Budget = {
+    bounded: Number.isFinite(budgetMs),
+    remaining: () => budgetMs - elapsed(),
+    spent: () => Number.isFinite(budgetMs) && budgetMs - elapsed() <= 0,
+  };
 
   const key = cacheKey(input.text, cacheDiscriminator(input), env.PROMPT_VERSION);
 
@@ -263,15 +402,28 @@ export async function generate(
   // ── Tiers 1–4: walk the model ladder ────────────────────────────────────────
   const ladder = modelLadder();
   let fellThrough = false; // moved past the first model → outcome "fallback"
+  let budgetExceeded = false;
 
   for (const step of ladder) {
+    // Between rungs — the check docs/09 §1.6 names. Necessary, and on its own not sufficient:
+    // it only runs when a call RETURNS, which is why each call also carries a deadline.
+    if (budget.spent()) {
+      budgetExceeded = true;
+      break;
+    }
     let retried = false;
     for (let attempt = 0; attempt < step.maxAttempts; attempt++) {
+      if (budget.spent()) {
+        budgetExceeded = true;
+        break;
+      }
       try {
         const result = await attemptModel(
           runModel,
           { modelId: step.modelId, system, prompt, schema },
           plan.validate,
+          budget,
+          deadline,
         );
         const outcome: LedgerOutcome = fellThrough
           ? "fallback"
@@ -300,11 +452,30 @@ export async function generate(
           modelId: step.modelId,
         };
       } catch (err) {
+        /**
+         * THE BUDGET IS CHECKED BEFORE CLASSIFICATION, and the order is load-bearing.
+         *
+         * An aborted call throws an error carrying no HTTP status, and `classify` maps statusless
+         * errors to "retry" (a network blip deserves one). Classify first and the ladder politely
+         * retries the very call it just cancelled for running out of time — the budget would buy
+         * nothing at all.
+         */
+        if (err instanceof BudgetExhaustedError || budget.spent()) {
+          budgetExceeded = true;
+          break;
+        }
         const kind = classify(err);
         if (kind === "retry") {
           retried = true;
           if (attempt < step.maxAttempts - 1) {
-            await sleep(backoff(attempt, err, random));
+            const wait = backoff(attempt, err, random);
+            // Never sleep past the deadline: waiting out a backoff we cannot afford would spend
+            // the remaining budget doing nothing at all.
+            if (budget.bounded && wait >= budget.remaining()) {
+              budgetExceeded = true;
+              break;
+            }
+            await sleep(wait);
             continue;
           }
           break; // this model's attempts exhausted → next model
@@ -314,11 +485,12 @@ export async function generate(
         break;
       }
     }
+    if (budgetExceeded) break;
     fellThrough = true;
   }
 
   // ── Tier 5/6: demo, else busy ───────────────────────────────────────────────
-  return serveDemo(input, "demo", demoFor, elapsed);
+  return serveDemo(input, "demo", demoFor, elapsed, budgetExceeded);
 }
 
 /**
@@ -527,20 +699,37 @@ async function attemptModel(
   runModel: RunModel,
   call: RunModelArgs,
   validate: (data: unknown) => unknown | null,
+  budget: Budget,
+  deadline: (ms: number, signal: AbortSignal) => Promise<void>,
 ): Promise<{ data: unknown; tokensIn: number; tokensOut: number }> {
   try {
-    const res = await runModel(call);
+    const res = await callWithinBudget(runModel, call, budget, deadline);
     const valid = validate(res.data);
     if (valid !== null) {
       return { data: valid, tokensIn: res.tokensIn, tokensOut: res.tokensOut };
     }
   } catch (err) {
-    if (!isMalformed(err)) throw err; // APICallError etc. bubble to the ladder
+    // `BudgetExhaustedError` is not malformed, so it bubbles to the ladder — as APICallError does.
+    if (!isMalformed(err)) throw err;
   }
+
+  /**
+   * THE REPAIR IS BUDGET-CHECKED, and this is the easiest place in the ladder to get it wrong.
+   * A repair DOUBLES a rung's wall-clock cost and happens INSIDE the rung, so no between-rungs
+   * check can see it: without this line a build can start a second full-length call with seconds
+   * left on the clock and be killed by the platform partway through it.
+   */
+  if (budget.spent()) throw new BudgetExhaustedError();
+
   // Repair: one more attempt, telling the model its previous output was invalid.
   const repairPrompt = `${call.prompt}\n\nYour previous response was invalid. Respond again with ONLY valid output in the required format, and nothing else.`;
   try {
-    const res = await runModel({ ...call, prompt: repairPrompt });
+    const res = await callWithinBudget(
+      runModel,
+      { ...call, prompt: repairPrompt },
+      budget,
+      deadline,
+    );
     const valid = validate(res.data);
     if (valid !== null) {
       return { data: valid, tokensIn: res.tokensIn, tokensOut: res.tokensOut };
@@ -564,6 +753,7 @@ async function serveDemo(
   notice: GenerateNotice,
   demoFor: (input: DemoInput) => unknown | null,
   elapsed: () => number,
+  budgetExceeded = false,
 ): Promise<GenerateResult> {
   const demo = demoFor({
     operation: input.operation,
@@ -578,13 +768,23 @@ async function serveDemo(
     });
     return { data: demo, tier: "demo", notice, modelId: null };
   }
+  /**
+   * The ledger row is written on this path too, INCLUDING a budget abandonment. A code path that
+   * skips the ledger write is incomplete (`.claude/rules/ai.md`), and an abandoned build that
+   * recorded nothing would be invisible to the Phase 7 cost dashboard — the one place anyone
+   * would notice builds routinely running out of time.
+   *
+   * The row keeps the existing `demo`/`failed` shape rather than introducing a sixth
+   * `LedgerOutcome`: the Phase 3 AC6 test pins that union exhaustively, and a new value would be
+   * schema churn for a distinction already recorded, more precisely, in `graphs.failureReason`.
+   */
   await recordLedger(input.userId, {
     operation: input.operation,
     tier: "demo",
     outcome: "failed",
     latencyMs: elapsed(),
   });
-  throw new ServiceBusyError();
+  throw budgetExceeded ? new GenerationBudgetExceededError() : new ServiceBusyError();
 }
 
 // ── Error classification (docs/04 §1 table) ─────────────────────────────────

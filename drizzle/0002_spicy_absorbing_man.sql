@@ -1,0 +1,1 @@
+ALTER TABLE "graphs" ADD COLUMN "build_started_at" timestamp with time zone;

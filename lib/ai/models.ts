@@ -44,6 +44,15 @@ export type RunModelArgs = {
   prompt: string;
   /** When present, use structured generation (generateObject); otherwise free text. */
   schema?: z.ZodType;
+  /**
+   * Cancels the call when the caller's wall-clock budget runs out (docs/09 §1.6).
+   *
+   * Without this the ladder has NO per-call bound, and a between-rungs budget check cannot save
+   * it: the check only runs when a call returns, so one stalled provider connection skips every
+   * check and the request is bounded by nothing below the platform deadline itself — which is
+   * exactly the deadline the budget exists to stay inside.
+   */
+  signal?: AbortSignal;
 };
 export type RunModelResult = { data: unknown; tokensIn: number; tokensOut: number };
 
@@ -67,7 +76,7 @@ export type RunModel = (args: RunModelArgs) => Promise<RunModelResult>;
  * It matters most for Phase 5: `graph_structure` and `concept_detail` both use this seam, and the
  * graph build is the longest operation in the product (docs/06 Phase 5 results).
  */
-export const realRunModel: RunModel = async ({ modelId, system, prompt, schema }) => {
+export const realRunModel: RunModel = async ({ modelId, system, prompt, schema, signal }) => {
   const model = openrouter().chat(modelId);
   if (schema) {
     const { object, usage } = await generateObject({
@@ -76,6 +85,7 @@ export const realRunModel: RunModel = async ({ modelId, system, prompt, schema }
       prompt,
       schema,
       maxRetries: 0,
+      abortSignal: signal,
     });
     return {
       data: object,
@@ -88,6 +98,7 @@ export const realRunModel: RunModel = async ({ modelId, system, prompt, schema }
     system,
     prompt,
     maxRetries: 0,
+    abortSignal: signal,
   });
   return {
     data: text,

@@ -1,7 +1,14 @@
-import { ServiceBusyError, generate } from "@/lib/ai/generate";
+import { GenerationBudgetExceededError, ServiceBusyError, generate } from "@/lib/ai/generate";
 import { auth } from "@/lib/auth";
 import { getDocument } from "@/lib/db/queries/documents";
-import { failGraph, finishGraph, getGraph } from "@/lib/db/queries/graphs";
+import {
+  claimGraphBuild,
+  failGraph,
+  finishGraph,
+  getGraph,
+  reapAbandonedGraph,
+} from "@/lib/db/queries/graphs";
+import { abandonedBefore, buildBudgetMs } from "@/lib/graph/build-budget";
 import { computeLayout, estimatedMinutesFor } from "@/lib/graph/layout";
 import { log } from "@/lib/log";
 import { withRateLimit } from "@/lib/rate-limit";
@@ -76,6 +83,27 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
     });
   }
 
+  /**
+   * A build that was claimed and never finished is RETIRED, not rebuilt (docs/09 §1.6).
+   *
+   * This is the guard the old pre-check could not be: it refused finished graphs, so a row
+   * stranded on `processing` by a platform kill was still "unfinished" and a retry was permitted —
+   * and re-spent, every time, with no reaper to stop it. Retiring costs nothing and gives the user
+   * the honest W4 message instead of a spinner over a graph that will never resolve.
+   */
+  if (await reapAbandonedGraph(userId, graphId, abandonedBefore())) {
+    log.warn("graph build: retired an abandoned build", { userId, graphId });
+    return json({ status: "failed", message: BUILD_FAILED_MESSAGE });
+  }
+
+  /**
+   * Claim the row BEFORE spending anything. A live build already holds it, so this is where a
+   * genuinely simultaneous second build stops — before its model call, rather than after it.
+   */
+  if (!(await claimGraphBuild(userId, graphId))) {
+    return json({ status: "processing" });
+  }
+
   const document = await getDocument(userId, graph.documentId);
   if (!document?.extractedText) {
     log.error("graph build: document text missing", undefined, { userId, graphId });
@@ -87,20 +115,45 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
   // cycles broken. All of that lives inside `generate` / `sanitizeGraph` — never here.
   let result;
   try {
-    result = await generate({
-      userId,
-      operation: "graph_structure",
-      text: document.extractedText,
-    });
+    result = await generate(
+      {
+        userId,
+        operation: "graph_structure",
+        text: document.extractedText,
+      },
+      {},
+      /**
+       * The wall-clock budget (docs/09 §1.6). Without it the ladder's own arithmetic can exceed
+       * the platform request timeout — and being killed by the platform is worse than failing,
+       * because nothing below this line runs and the row never leaves `processing`.
+       */
+      { budgetMs: buildBudgetMs() },
+    );
   } catch (error) {
-    if (!(error instanceof ServiceBusyError)) {
+    const outOfTime = error instanceof GenerationBudgetExceededError;
+    if (outOfTime) {
+      /**
+       * Worth an alert rather than a quiet failure: it means the ladder no longer fits inside the
+       * deadline, which is a capacity signal (a slower provider, an extra rung) and not a bad
+       * document. The user still gets the ordinary W4 message.
+       */
+      log.error("graph build: wall-clock budget exceeded", error, {
+        userId,
+        graphId,
+        budgetMs: buildBudgetMs(),
+      });
+    } else if (!(error instanceof ServiceBusyError)) {
       log.error("graph build: unexpected failure", error, { userId, graphId });
     }
     // Tier 5 and tier 6 both land here, because there is no demo graph to serve.
     await failGraph(
       userId,
       graphId,
-      error instanceof ServiceBusyError ? "ladder exhausted" : "unexpected build failure",
+      outOfTime
+        ? "wall-clock budget exceeded"
+        : error instanceof ServiceBusyError
+          ? "ladder exhausted"
+          : "unexpected build failure",
     );
     return json({ status: "failed", message: BUILD_FAILED_MESSAGE });
   }

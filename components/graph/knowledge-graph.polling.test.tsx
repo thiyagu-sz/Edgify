@@ -123,14 +123,16 @@ describe("the timeout's retry does not re-spend", () => {
   });
 
   /**
-   * `ZOMBIE-PROCESSING-ROW` (docs/06 Phase 5, docs/09 §1.6) is an OPEN blocker: a build killed by
-   * the platform leaves its row `processing` forever, and the build route's idempotency check
-   * refuses only FINISHED graphs — so re-firing the build on such a row is permitted and spends
-   * again, with no reaper to stop it.
+   * "Keep waiting" resumes POLLING only, and never re-fires the build.
    *
-   * Until the wall-clock budget and the stale-`processing` guard exist, the client must not offer
-   * a button that re-spends. "Keep waiting" therefore resumes POLLING only. This test is the
-   * guard on that decision; it should be revisited when §1.6 is fixed, not before.
+   * REVISITED 2026-08-05, as this comment previously instructed, when `ZOMBIE-PROCESSING-ROW` was
+   * fixed (docs/09 §1.6). The original reason has gone: a build killed by the platform no longer
+   * leaves its row `processing` forever, so a re-fire can no longer double-spend on a zombie.
+   *
+   * The test is KEPT because the behaviour it guards is still correct, on a different argument.
+   * Polling is now what SURFACES the outcome — the reaper retires an abandoned build on this very
+   * request — so re-firing would add spend-shaped risk to a button whose whole job is to wait. The
+   * assertion below is unchanged; only its justification is.
    */
   it("resumes polling without firing another build", async () => {
     const api = installFakeGraphApi({ graph: { status: "processing" } });

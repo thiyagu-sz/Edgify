@@ -66,6 +66,13 @@ export const graphs = pgTable(
     promptVersion: text("prompt_version").notNull(),
     modelId: text("model_id").notNull(),
     createdAt: timestamptz("created_at").defaultNow().notNull(),
+    /**
+     * When a build claimed this row — the only thing that distinguishes a LIVE build from an
+     * ABANDONED one (docs/09 §1.6). `createdAt` cannot do it: the row is created at upload, before
+     * the client fires the build, so an old `createdAt` says nothing about whether anything is
+     * still running. Null means never claimed.
+     */
+    buildStartedAt: timestamptz("build_started_at"),
   },
   (table) => [
     index("graphs_user_created_idx").on(table.userId, table.createdAt.desc()),

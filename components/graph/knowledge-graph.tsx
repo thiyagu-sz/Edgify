@@ -880,12 +880,18 @@ function StudyPlanView({
  * Everything that is not a rendered graph: the first-visit empty state, the build in progress,
  * the honest W4 failure, and the poll timeout.
  *
- * The timeout offers "Keep waiting", which RESUMES POLLING rather than re-firing the build. That
- * is deliberate and it is a safety property, not a preference: `ZOMBIE-PROCESSING-ROW` (docs/06
- * Phase 5, docs/09 §1.6) is unfixed, so a build killed by the platform leaves the row
- * `processing` forever — and the build route's idempotency check refuses only FINISHED graphs, so
- * a re-fire on such a row is permitted and spends again. Until the wall-clock budget and the
- * stale-`processing` guard exist, the client must not offer a button that re-spends.
+ * The timeout offers "Keep waiting", which RESUMES POLLING rather than re-firing the build.
+ *
+ * REVISITED 2026-08-05, when `ZOMBIE-PROCESSING-ROW` was fixed (docs/09 §1.6), and the behaviour
+ * is KEPT — for a better reason than the one it was chosen for. It was originally a safety
+ * property: a build killed by the platform left its row `processing` forever, and the build
+ * route's idempotency check refused only FINISHED graphs, so a re-fire was permitted and spent
+ * again. That is now impossible — a stale row is retired to `failed` and a re-fire spends nothing.
+ *
+ * But re-firing is now also POINTLESS, which is the stronger argument for the same button.
+ * Whatever the poll is waiting on either resolves on its own or gets retired by the reaper, and
+ * polling is what surfaces both. A "Try again" that re-fires would, at best, be told `failed` by
+ * the guard; the honest recovery from a genuinely dead build is a fresh upload.
  */
 function GraphStatus({
   status,

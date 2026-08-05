@@ -92,6 +92,22 @@ const envSchema = z.object({
   // Bump to invalidate the generation cache when prompt templates change (docs/08 §prompts).
   PROMPT_VERSION: z.string().min(1).default("v2"),
 
+  // --- Phase 7: bounding the graph build's wall clock (docs/09 §1.6) ---------
+  /**
+   * Wall-clock budget for ONE graph build: checked between ladder rungs and enforced per model
+   * call. The graph build is the longest operation in the product and the ladder's own arithmetic
+   * can exceed the platform request timeout — at the measured ~65s median call latency, a build
+   * that repairs once and falls through reaches ~260s and one reaching the paid rung exceeds 300s.
+   *
+   * This MUST stay comfortably below the platform request timeout (300s on Cloud Run). The
+   * remainder is what pays for writing `status = "failed"` and returning a response, which is the
+   * entire difference between an honest failure and a row stuck on `processing` forever.
+   *
+   * In the environment because the deadline it hides under is a DEPLOYMENT property: changing the
+   * Cloud Run request timeout must not require a code release.
+   */
+  GRAPH_BUILD_BUDGET_MS: z.coerce.number().int().positive().default(200_000),
+
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),

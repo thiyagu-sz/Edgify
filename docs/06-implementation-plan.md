@@ -372,8 +372,11 @@ someone should open one before launch.
 - Lazy concept detail — persisted on the REQUEST PATH, not via `after()` (see slice 3 results)
 - Mastery tracking
 - **Dedupe on `contentHash`** — clone an existing graph instead of regenerating
-- **BLOCKER — the build can outlive its own request.** Found 2026-07-30 by the first live
-  end-to-end run; two coupled defects, launch-blocking, gated in docs/09 §1.6 and go/no-go item 8.
+- **BLOCKER — the build can outlive its own request. CLOSED 2026-08-05** (built in Phase 7's
+  window, locally, before any deploy — see Phase 7 below for the fix and its evidence). Found
+  2026-07-30 by the first live end-to-end run; two coupled defects, launch-blocking, gated in
+  docs/09 §1.6 and go/no-go item 8. Recorded here as found rather than rewritten, because the
+  measurement below is what made it visible:
   **`LADDER-EXCEEDS-TIMEOUT`**: at ~65s median single-call latency, a build that repairs once and
   falls through to the fallback rung reaches ~195–260s and one reaching the paid rung exceeds the
   300s Cloud Run request timeout — the *ordinary* case under free-tier rate limiting, not a tail.
@@ -564,7 +567,7 @@ reasoned about as a pair:
 
 | Window | Bound | Why it is accepted |
 |---|---|---|
-| **Graph build** (`finishGraph`) | At most one wasted model call, when two builds for the same graph are genuinely simultaneous | Corruption is fully closed by the conditional `UPDATE … WHERE status = 'processing'`, which takes the row lock first. Closing the spend window too needs a `building` claim status, which docs/03 does not define |
+| ~~**Graph build** (`finishGraph`)~~ **— CLOSED 2026-08-05** | ~~At most one wasted model call, when two builds for the same graph are genuinely simultaneous~~ | **No longer accepted: it was closed as a side effect of the §1.6 fix.** `claimGraphBuild` claims on `buildStartedAt IS NULL` *before* the model call, so the loser of a simultaneous pair now returns without spending instead of discovering it lost afterwards. The reasoning below — "closing it needs a `building` status, which docs/03 does not define" — was **sound but incomplete**: a nullable claim TIMESTAMP does the same job as a claim STATUS, and docs/03's four statuses stay exhaustive because the claim is not one of them. Worth noting the shape of the miss: the blocker was reasoned about as a *status* problem because the existing guard was a status check |
 | **Concept detail** (`setConceptDetail`) | At most one wasted model call, when a user double-clicks a concept fast enough that both requests pass the stored-detail check before either commits | Same mechanism: `UPDATE … WHERE detailJson IS NULL` takes the row lock, so first commit wins and the loser serves the winner's value rather than overwriting it. Closing it needs request coalescing — more machinery than one duplicate call justifies |
 
 Both are bounded by the per-user daily quota. The detail case matters slightly more than it looks:
@@ -929,11 +932,26 @@ so neither seam can regress.
 - Internal usage dashboard from `usage_ledger`
 - Load test at 25 concurrent (2.5x target)
 - **BLOCKER — bound the graph build's wall clock (`LADDER-EXCEEDS-TIMEOUT`,
-  `ZOMBIE-PROCESSING-ROW`).** Carried from Phase 5, gated in docs/09 §1.6 and go/no-go item 8.
-  A wall-clock budget (~200s) checked **between ladder rungs**, a heartbeat that transitions
-  abandoned builds to `failed`, and a build-route guard that refuses or reclaims a stale
-  `processing` row instead of re-spending on it. **This is the real fix, and it is required
-  regardless of `after()`.**
+  `ZOMBIE-PROCESSING-ROW`). DONE 2026-08-05 — built and proven LOCALLY, before any deploy.**
+  Carried from Phase 5, gated in docs/09 §1.6 and go/no-go item 8. Full record in §1.6; the short
+  version:
+
+  - **The budget** (`GRAPH_BUILD_BUDGET_MS`, default 200s) is checked before each rung, before each
+    retry, before the **repair** call, and clamps the backoff. **A between-rungs check alone is not
+    enough**, which is the one finding worth carrying forward: that check only runs when a call
+    RETURNS, so a stalled provider skips every one of them. Each call now carries an abort signal
+    armed for the remaining budget. The red run demonstrated this literally — the stalled cases
+    hung the test runner until it timed out.
+  - **The reaper** uses a new `graphs.buildStartedAt` (migration `0002`), because `createdAt` is
+    set at upload and cannot tell a live build from an abandoned one. Retirement is lazy, on the
+    poll and build routes, so there is no cron and the normal poll still costs one round trip.
+  - **The build-route guard refuses rather than reclaims** — a stale row is retired to `failed` for
+    zero spend. It also closed the Phase 5 double-spend window as a side effect.
+
+  Sequenced deliberately as a *correctness* fix ahead of the deploy: it is cheaper as a failing
+  test than as a hung production request, and cheaper still than a build route that re-fires and
+  re-spends against a live billing account. **Two things remain for the deploy itself**, because no
+  local harness can produce them: a genuine mid-build `kill -9`, and a real 300s platform timeout.
 - **Confirm Cloud Run keeps CPU allocated after the response is sent.** Phase 5 deliberately made
   the graph build a separate client-fired request (`POST /api/graph/:id/build`) rather than using
   Next's `after()`, because `after()` silently depends on this setting and a wrong guess ends every

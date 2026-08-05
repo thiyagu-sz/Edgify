@@ -162,27 +162,77 @@ third is the expensive one:
 
 **Both fixes are required; neither substitutes for the other.**
 
-- [ ] **A wall-clock budget (~200s) checked BETWEEN ladder rungs**, abandoning to
-      `status = "failed"` cleanly *before* the platform kills the request. This is the real fix for
-      Defect 1: the ladder must be bounded in the dimension the platform actually enforces.
-- [ ] **A timeout/heartbeat that transitions abandoned builds to `failed`**, so a row killed
-      despite the budget (process crash, instance eviction) cannot stay `processing` forever.
-- [ ] **A build-route guard that refuses or reclaims a `processing` row older than the budget**
-      rather than re-spending on it. The current idempotency check is necessary but insufficient:
-      it distinguishes finished from unfinished, not *live* from *abandoned*.
-- [ ] Verified by injection, **showing the FAILING run first**. Force a build past the budget and
-      capture the *current* behaviour before any fix exists: the request is killed, the row stays
-      `processing`, the poll never resolves, and a retry re-spends. Only then apply the fix and
-      re-run to green.
+**CLOSED 2026-08-05, built and proven locally before any deploy.** Four files carry the fix
+(`lib/ai/generate.ts`, `lib/db/queries/graphs.ts`, and the two graph routes) and two carry the
+proof (`lib/ai/generate.budget.test.ts`, `app/api/graph/graph-zombie.integration.test.ts`).
 
-      **"Assert it is fixed" is not enough here**, and this box is written this way because the
-      defect is one a green-only test cannot distinguish. Both the broken and the fixed system
-      return `processing` for most of the build — the difference is only whether that state is ever
-      left. A test written after the fix would pass against the zombie too if the injection did not
-      actually push past the budget, and nobody would know. Capturing the hang and the second spend
-      first is what proves the injection has teeth. Same standard as every other control in this
-      project (docs/06 Phase 5: the isolation, clone, cache-key and ON CONFLICT drills all recorded
-      their red run before their green one)
+- [x] **A wall-clock budget (~200s) checked BETWEEN ladder rungs** — met 2026-08-05.
+      `GRAPH_BUILD_BUDGET_MS` (default 200,000, in the environment because the deadline it hides
+      under is a deployment property) is passed by the build route into `generate`, which checks it
+      before each rung, before each retry within a rung, before the **repair** call, and clamps the
+      backoff so it cannot sleep past the deadline. Exhaustion throws
+      `GenerationBudgetExceededError extends ServiceBusyError`, so the user-facing result is the
+      unchanged W4 message while `graphs.failureReason` records which of the two happened.
+
+      **THIS BOX AS ORIGINALLY WRITTEN WAS NECESSARY BUT NOT SUFFICIENT, and the gap is worth
+      keeping.** A check *between rungs* only runs when a call RETURNS. One stalled provider
+      connection therefore skips every check, and the ladder had no per-call bound at all —
+      `realRunModel` passed `maxRetries: 0` but no `abortSignal`, so a stalled call was bounded by
+      nothing below the platform deadline itself, which is the deadline the budget exists to stay
+      inside. Each call now carries an abort signal armed for the remaining budget. The red run
+      measured this directly: the two stalled-call cases **hung the test runner until it timed
+      out**, which is the production failure reproduced.
+
+      One ordering detail that would have silently voided the whole fix: an aborted call throws an
+      error with no HTTP status, and `classify` maps statusless errors to `"retry"`. The budget is
+      therefore checked **before** classification, or the ladder politely retries the call it just
+      cancelled.
+- [x] **A timeout/heartbeat that transitions abandoned builds to `failed`** — met 2026-08-05.
+      `graphs.buildStartedAt` (nullable, migration `0002`) is the missing fact: `createdAt` is set
+      at upload, *before* the client fires the build, so it can never distinguish a live build from
+      an abandoned one. `reapAbandonedGraph` retires a row claimed longer ago than
+      budget + 60s grace.
+
+      **Lazy, at the two points somebody is actually waiting** — the poll and the build route —
+      rather than a cron reaper. The poll is what makes never-resolve resolve, and it costs no
+      extra round trip on the normal path: staleness is decided in memory from the row already
+      fetched, so only a genuinely abandoned build pays for the write. That matters, because the
+      600/min limit on `GET /api/graph/:id` is built on that request costing one query. A row
+      nobody ever looks at again is left alone deliberately; it harms nothing.
+- [x] **A build-route guard that refuses or reclaims a `processing` row older than the budget** —
+      met 2026-08-05. **Refuse, not reclaim**: a stale row is retired to `failed` and the caller
+      gets the W4 message, spending nothing. Reclaiming would re-spend, which is the exact
+      consequence this defect is about.
+
+      `claimGraphBuild` claims on `buildStartedAt IS NULL`, so exactly one build can ever take a
+      row. **This also closes the accepted spend window recorded in Phase 5** (docs/06): two
+      genuinely simultaneous builds both used to pass the route's pre-check and both call the
+      model, the loser discovering it lost only afterwards. The loser now fails its claim and
+      returns *before* the model call — and this needs no `building` status, so docs/03's four
+      statuses stay exhaustive.
+- [x] **Verified by injection, showing the FAILING run first** — met 2026-08-05. Both red runs were
+      captured against the unfixed code, and the tests are the same files that are green now.
+
+      **Defect 1, red:** `expected 390000 to be less than or equal to 200000` — the ladder's full
+      walk (3 rungs x (attempt + repair) = 6 calls at the measured ~65s median) against a 300s
+      deadline. Plus the two stalled cases hanging the runner outright. **Green:** 7/7, abandoning
+      at exactly the budget. The clock is injected through the `now`/`sleep` seams `generate`
+      already exposed, so a 200-second budget is proven in **17ms** of test time.
+
+      **Defect 2, red** (real Postgres, only the model faked; the kill is simulated by a model call
+      that never settles and a route promise nobody awaits, so nothing is written — exactly what a
+      `kill -9` leaves): `expected 'processing' to be 'failed'` (the poll never resolves),
+      `expected 2 to be 1` (the retry re-spent), `expected 1 to be +0` (every retry re-spends), and
+      `expected 'ready' to be 'processing'` (a concurrent build re-spent and completed).
+      **Green:** 8/8.
+
+      The controls are what stop this passing vacuously, and they are as load-bearing as the
+      assertions. On the budget side: the same harness with the budget lifted must still sail past
+      300s — if that goes green, the injection has lost its teeth. On the zombie side: a build
+      claimed seconds ago must **not** be reaped, and one aged only 210s (inside the 260s
+      threshold) must not either. **A reaper that failed every `processing` row would satisfy every
+      other assertion in that file and take down every live build in production**, which is a worse
+      outcome than the zombie it replaces.
 
 **Coupling to the `after()` decision (Phase 7) — read this before adopting `after()`.**
 `after()` has **identical deadline exposure**. Moving the build off the response path does not
@@ -194,6 +244,13 @@ timeout into a silent one.
 The wall-clock-budget work is **the real fix**; `after()` is **orthogonal** to it. Sequence them
 independently: the budget is required whether or not `after()` is ever adopted, and `after()`
 must not be adopted until the budget exists.
+
+> **As of 2026-08-05 the budget exists, so that precondition is met — and it is only one of two.**
+> `after()` still requires confirming Cloud Run keeps CPU allocated after the response (Phase 7),
+> and it remains an optimisation worth exactly one saved round trip. Note what the budget does
+> *not* do for it: the budget bounds the ladder, but under `after()` there is no longer a hanging
+> request to notice, so the reaper — not the budget — is what would surface a build the platform
+> cut short. Adopt in that order or not at all.
 
 ---
 
@@ -315,8 +372,8 @@ For each row: induce the failure, confirm the user-facing result, then restore.
 | Database unreachable | Point `DATABASE_URL` at a dead host | Landing page and demo still work |
 | Neon cold start | Idle 10+ minutes, then request | Succeeds after connection retry |
 | Slow model | Stub a 60-second delay | Times out cleanly into the busy message |
-| **Slow model, graph build** | Stub 60s+ so the ladder repairs and falls through | **Currently FAILS — see §1.6.** Expected: the wall-clock budget lands the graph on `failed` before the platform kills it. Today: the request is killed and the row stays `processing` forever |
-| **Build killed mid-flight** | `kill -9` the container during a build, or force past 300s | Row transitions to `failed`; the poll resolves; a retry does **not** spend a second generation |
+| **Slow model, graph build** | Stub 60s+ so the ladder repairs and falls through | **FIXED 2026-08-05 (§1.6)** — the wall-clock budget lands the graph on `failed` before the platform kills it. Proven on a simulated clock (`lib/ai/generate.budget.test.ts`); re-confirm against the real deployment in Phase 7 |
+| **Build killed mid-flight** | `kill -9` the container during a build, or force past 300s | **FIXED 2026-08-05 (§1.6)** — the row transitions to `failed`, the poll resolves, and a retry does **not** spend a second generation. Proven against real Postgres with the kill simulated (`app/api/graph/graph-zombie.integration.test.ts`); a genuine `kill -9` against the container is a Phase 7 deploy check |
 
 - [ ] Every row produces a calm user-facing state
 - [ ] **No row produces a stack trace, an HTTP code, or a vendor name on screen**
@@ -442,7 +499,9 @@ Launch only when every one of these is true:
 7. 25 concurrent users for 10 minutes with zero 5xx
 8. **The graph build cannot outlive its own request** (§1.6): a wall-clock budget bounds the
    ladder, an abandoned build reaches `failed`, and a retry on a stale `processing` row does not
-   re-spend
+   re-spend — **code fix CLOSED 2026-08-05**, red-then-green, before deploy. What remains at
+   launch is confirming it against the real platform: a genuine mid-build `kill -9` and a real
+   300s timeout, which no local harness can produce
 
 Anything else can be a known gap with a follow-up task. These eight cannot.
 

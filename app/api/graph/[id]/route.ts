@@ -2,7 +2,8 @@ import { auth } from "@/lib/auth";
 import { listConcepts } from "@/lib/db/queries/concepts";
 import { listEdges } from "@/lib/db/queries/edges";
 import { listMastery } from "@/lib/db/queries/mastery";
-import { getGraph } from "@/lib/db/queries/graphs";
+import { getGraph, reapAbandonedGraph } from "@/lib/db/queries/graphs";
+import { abandonedBefore } from "@/lib/graph/build-budget";
 import { withRateLimit } from "@/lib/rate-limit";
 
 /**
@@ -64,6 +65,25 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
   // While processing, the poll costs exactly ONE round trip — there is nothing to read yet, and
   // this is the state the client sits in for up to 90 seconds.
   if (graph.status !== "ready") {
+    /**
+     * THE POLL IS WHERE AN ABANDONED BUILD IS RETIRED (docs/09 §1.6).
+     *
+     * A build killed mid-flight writes nothing, so its row stays `processing` forever and this
+     * route would answer `processing` indefinitely — the never-fail promise (docs/04) becoming
+     * never-RESOLVE, which is worse than an honest error because nothing surfaces it. Retiring it
+     * here means the transition happens exactly when somebody is waiting on the answer, which is
+     * why no background reaper is needed.
+     *
+     * THE ROUND-TRIP COST IS UNCHANGED on the normal path: staleness is decided in memory from the
+     * row already fetched above, so only a genuinely abandoned build pays for the write. That
+     * matters — this is the request the client repeats every 1.5s for up to 90s, and the 600/min
+     * limit on this route is built on it costing one query.
+     */
+    const stale =
+      graph.buildStartedAt !== null && graph.buildStartedAt < abandonedBefore();
+    if (stale && (await reapAbandonedGraph(userId, graphId, abandonedBefore()))) {
+      return json({ status: "failed", message: BUILD_FAILED_MESSAGE });
+    }
     return json({ status: graph.status, title: graph.title });
   }
 

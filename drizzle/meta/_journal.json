@@ -15,6 +15,13 @@
       "when": 1784992074417,
       "tag": "0001_nifty_kang",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785895497237,
+      "tag": "0002_spicy_absorbing_man",
+      "breakpoints": true
     }
   ]
 }

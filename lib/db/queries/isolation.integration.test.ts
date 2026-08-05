@@ -18,12 +18,14 @@ import {
 } from "./documents";
 import { listEdges } from "./edges";
 import {
+  claimGraphBuild,
   cloneGraphByContentHash,
   createGraph,
   failGraph,
   finishGraph,
   getGraph,
   getLatestGraph,
+  reapAbandonedGraph,
 } from "./graphs";
 import { readLedger, recordLedger } from "./ledger";
 import { listMastery, upsertMastery } from "./mastery";
@@ -115,6 +117,22 @@ async function seedGraph(userId: string, contentHash = `hash-${randomUUID()}`) {
   return { doc, graphId: graph.id, contentHash };
 }
 
+/** A graph still on `processing`, with no build claimed yet — what an upload leaves behind. */
+async function seedProcessingGraph(userId: string) {
+  const doc = await createDocument(userId, {
+    title: "lecture",
+    contentHash: `hash-${randomUUID()}`,
+    extractedText: "secret coursework",
+  });
+  const graph = await createGraph(userId, {
+    documentId: doc.id,
+    title: "Draft",
+    modelId: "model-intended",
+    promptVersion: "v1",
+  });
+  return { doc, graphId: graph.id };
+}
+
 // module.fn names proven below — checked by the coverage guard.
 const CASE_NAMES = [
   "documents.getDocument",
@@ -128,6 +146,8 @@ const CASE_NAMES = [
   "graphs.getLatestGraph",
   "graphs.finishGraph",
   "graphs.failGraph",
+  "graphs.claimGraphBuild",
+  "graphs.reapAbandonedGraph",
   "concepts.listConcepts",
   "concepts.getConcept",
   "concepts.setConceptDetail",
@@ -293,6 +313,38 @@ describe("cross-user isolation: graphs, concepts, edges", () => {
     await seedGraph(owner);
     expect((await getLatestGraph(owner))?.userId).toBe(owner); // positive control
     expect(await getLatestGraph(stranger)).toBeUndefined(); // isolation
+  });
+
+  /**
+   * The two wall-clock guards (docs/09 §1.6) are conditional UPDATEs, and an unscoped one is worse
+   * than an unscoped read: it does not leak a stranger's coursework, it MUTATES it. Dropping the
+   * `userId` predicate from `reapAbandonedGraph` would let any signed-in user retire another
+   * user's in-flight build, and from `claimGraphBuild` would let them block one from ever starting.
+   */
+  it("claimGraphBuild: only the owner can claim their build", async () => {
+    const { graphId } = await seedProcessingGraph(A);
+
+    expect(await claimGraphBuild(B, graphId), "a stranger claimed the build").toBe(false); // isolation
+    expect(await claimGraphBuild(A, graphId)).toBe(true); // positive control
+
+    // And the claim is genuinely exclusive once taken — the property the route relies on to stop
+    // a second concurrent build before its model call.
+    expect(await claimGraphBuild(A, graphId)).toBe(false);
+  });
+
+  it("reapAbandonedGraph: only the owner can retire their build", async () => {
+    const { graphId } = await seedProcessingGraph(A);
+    await claimGraphBuild(A, graphId);
+    const future = new Date(Date.now() + 60_000); // everything already claimed looks abandoned
+
+    expect(
+      await reapAbandonedGraph(B, graphId, future),
+      "a stranger retired someone else's build",
+    ).toBe(false); // isolation
+    expect((await getGraph(A, graphId))?.status, "B's reap mutated A's graph").toBe("processing");
+
+    expect(await reapAbandonedGraph(A, graphId, future)).toBe(true); // positive control
+    expect((await getGraph(A, graphId))?.status).toBe("failed");
   });
 
   it("listConcepts: owner sees the nodes; the other user sees none", async () => {
