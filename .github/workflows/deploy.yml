@@ -114,3 +114,8 @@ jobs:
             NODE_ENV=production
             BETTER_AUTH_URL=${{ secrets.BETTER_AUTH_URL }}
             GRAPH_BUILD_BUDGET_MS=200000
+            # Without this the internal dashboard 404s for EVERYONE in production, including the
+            # operator — lib/admin.ts fails closed on an empty allowlist, by design. Not in Secret
+            # Manager because it is not a credential; a GitHub secret keeps it out of the workflow
+            # file and out of the service config's plaintext.
+            ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}

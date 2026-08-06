@@ -298,6 +298,146 @@ log).
 
 ---
 
+## Phase 7 deploy setup — one time, before the first deploy
+
+> **STATUS: WRITTEN, NOT YET RUN (2026-08-05).** Every command below is derived from what
+> `.github/workflows/deploy.yml` actually requires, but **none has been executed against
+> `innovationmate`** — `gcloud` is not installed on the development machine and authenticating it
+> needs an interactive browser consent flow.
+>
+> Treating this as verified would repeat the exact mistake §1.4 of docs/09 records: a step written
+> down and believed, with no execution id behind it, sitting behind a checked box for nine days.
+> **Correct this section from what actually happens on the first run** — especially the IAM roles,
+> which are the part most likely to be short by one.
+
+> **Run this in Cloud Shell, not on your laptop.** `gcloud` is pre-installed there and already
+> authenticated as the account that owns the project, which removes both of the things that block
+> this locally: the Windows installer requires administrator elevation, and `gcloud auth login`
+> needs an interactive browser consent flow.
+>
+> **Nothing here needs a local `gcloud` afterwards either.** Deploys run in GitHub Actions against
+> Workload Identity Federation, so the CLI is a one-time setup tool, not part of the loop. Install
+> it locally only if you want ad-hoc `gcloud run services describe` / `gcloud logging read` access.
+
+Fill these in once; `deploy.yml` consumes them on every push to `main`.
+
+```bash
+PROJECT_ID=innovationmate                 # docs/06 Phase 7 — the drilled billing-cap project
+REGION=asia-south1                        # docs/07
+REPO=thiyagu-sz/Edgify                    # owner/name, exactly as GitHub spells it
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+```
+
+### 1. Enable the APIs
+
+```bash
+gcloud services enable \
+  run.googleapis.com secretmanager.googleapis.com iamcredentials.googleapis.com \
+  cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  --project="$PROJECT_ID"
+```
+
+`iamcredentials` is the one people miss: without it Workload Identity Federation fails at token
+exchange with an error that does not name the missing API.
+
+### 2. Deploy service account
+
+```bash
+gcloud iam service-accounts create edgify-deployer \
+  --project="$PROJECT_ID" --display-name="Edgify GitHub deployer"
+SA="edgify-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+for ROLE in roles/run.admin roles/cloudbuild.builds.editor roles/artifactregistry.admin \
+            roles/storage.admin roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="$ROLE" --condition=None
+done
+```
+
+`roles/iam.serviceAccountUser` is required to deploy a revision that *runs as* the Cloud Run
+runtime account. `roles/storage.admin` is for Cloud Build's staging bucket, which `--source .`
+uses.
+
+### 3. Workload Identity Federation, scoped to this repository
+
+```bash
+gcloud iam workload-identity-pools create github \
+  --location=global --project="$PROJECT_ID" --display-name="GitHub Actions"
+
+gcloud iam workload-identity-pools providers create-oidc github \
+  --location=global --workload-identity-pool=github --project="$PROJECT_ID" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='${REPO}'"
+
+gcloud iam service-accounts add-iam-policy-binding "$SA" --project="$PROJECT_ID" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}"
+```
+
+> **`--attribute-condition` is not optional, and omitting it is the classic WIF breach.** Without
+> it the provider trusts *any* GitHub Actions token from *any* repository on GitHub, so anyone's
+> workflow can impersonate this service account and deploy to — or read secrets from — this
+> project. The `principalSet` binding in the third command narrows *who may impersonate*; the
+> attribute condition narrows *what the provider will mint a token for*. Set both.
+
+### 4. Secrets
+
+Values come from your working `.env.local`. `printf '%s'` rather than `echo`, because a trailing
+newline inside a connection string or key is a genuinely painful hour.
+
+```bash
+create_secret() {  # create_secret <secret-name> <value>
+  printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --project="$PROJECT_ID" \
+    --replication-policy=automatic
+}
+create_secret edgify-db-url              "$DATABASE_URL"
+create_secret edgify-openrouter          "$OPENROUTER_API_KEY"
+create_secret edgify-auth-secret         "$BETTER_AUTH_SECRET"
+create_secret edgify-google-client-id    "$GOOGLE_CLIENT_ID"
+create_secret edgify-google-client-secret "$GOOGLE_CLIENT_SECRET"
+
+# The Cloud Run runtime identity must be able to READ them.
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+for S in edgify-db-url edgify-openrouter edgify-auth-secret \
+         edgify-google-client-id edgify-google-client-secret; do
+  gcloud secrets add-iam-policy-binding "$S" --project="$PROJECT_ID" \
+    --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor
+done
+```
+
+**`DATABASE_URL` must carry `sslmode=verify-full`.** `lib/env.ts` refuses to boot on
+`prefer`/`require`/`verify-ca` (they weaken under pg 9), so a Neon-issued URL pasted unedited will
+fail at startup rather than at request time — loudly, which is the intent.
+
+### 5. GitHub repository secrets
+
+Settings → Secrets and variables → Actions:
+
+| Secret | Value |
+|---|---|
+| `WIF_PROVIDER` | `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github` |
+| `GCP_SA` | `edgify-deployer@innovationmate.iam.gserviceaccount.com` |
+| `DATABASE_URL` | same value as `edgify-db-url` — the migration step runs on the runner, not in Cloud Run |
+| `BETTER_AUTH_URL` | the deployed origin, exactly (no trailing slash) |
+| `ADMIN_EMAILS` | your address, or `/admin/usage` 404s for everyone including you |
+
+### 6. The chicken-and-egg on `BETTER_AUTH_URL`
+
+Cloud Run URLs are `SERVICE-PROJECTNUMBER.REGION.run.app`, so the origin is not known until the
+service exists — but `BETTER_AUTH_URL` must match it exactly or every sign-in fails, and the Google
+OAuth redirect URI must match it too. Expect **two deploys**: the first creates the service, then
+set `BETTER_AUTH_URL` and the OAuth redirect URI to the URL it printed, and redeploy. A custom
+domain removes the problem permanently.
+
+### 7. Before merging to `main`
+
+`deploy.yml` triggers on push to `main`, so the merge *is* the deploy. If the first one should be
+deliberate, configure Settings → Environments → `production` with a required reviewer first — the
+workflow already declares `environment: production`, so that gate activates the moment it exists.
+
+---
+
 ## Runbooks
 
 ### "Server is busy" reported by a user
