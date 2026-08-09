@@ -110,11 +110,30 @@ const envSchema = z.object({
   // 2958ms end to end, of which ~2.1s is provider TTFT (docs/06 Phase 4 results). Treat free-tier
   // latency as variable — p95 was 12.7s — and re-measure before relying on a figure.
   OPENROUTER_FREE_MODEL: z.string().min(1).default("google/gemma-4-26b-a4b-it:free"),
-  // Comma-separated additional free ids tried before falling to the paid tier — a different
-  // provider (InclusionAI) so a Google-side rotation/429 doesn't take the free tier down. Kept to
-  // ONE verified-live, non-reasoning id: most other free models today reason heavily (token burn,
-  // slow first token) or are saturated. The paid tier is the backstop beyond this (docs/04 §1).
-  OPENROUTER_FREE_FALLBACKS: z.string().default("inclusionai/ling-3.0-flash:free"),
+  // Comma-separated additional free ids tried before falling to the paid tier. Kept to ONE
+  // verified-live, non-reasoning id: most free models today reason heavily (token burn, slow first
+  // token) or are saturated. The paid tier is the backstop beyond this (docs/04 §1).
+  //
+  // CHANGED 2026-08-09. Held `inclusionai/ling-3.0-flash:free` until that id was RETIRED —
+  // confirmed absent from the live catalogue while the primary and paid ids are both still
+  // present. A retired id is not a harmless leftover: it spends two attempts collecting 4xx before
+  // the ladder reaches the paid backstop, so it costs latency on exactly the requests where the
+  // free primary has already failed.
+  //
+  // THE REPLACEMENT TRADES PROVIDER DIVERSITY FOR THE NON-REASONING REQUIREMENT, deliberately.
+  // The previous id was chosen to be a DIFFERENT provider so a Google-side rotation or 429 could
+  // not take the whole free tier down. Nothing currently in the free catalogue satisfies both
+  // constraints: the non-Google candidates checked (`openai/gpt-oss-20b`,
+  // `nvidia/nemotron-3-super-120b-a12b`) both carry `reasoning`/`include_reasoning`/
+  // `reasoning_effort`, and `lib/ai/models.ts` never passes those, so their reasoning cannot be
+  // turned down from here.
+  //
+  // Non-reasoning won because its cost is measured and continuous — it applies to EVERY fallback
+  // call — while the provider-diversity loss is conditional on a Google-wide outage. What survives
+  // is protection against per-model saturation and rotation, which is the common case; what is
+  // lost is protection against Google going down entirely, where the ladder now falls to paid one
+  // rung sooner. Revisit if a non-reasoning free id appears on another provider.
+  OPENROUTER_FREE_FALLBACKS: z.string().default("google/gemma-4-31b-it:free"),
   OPENROUTER_PAID_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
   // Bump to invalidate the generation cache when prompt templates change (docs/08 §prompts).
   PROMPT_VERSION: z.string().min(1).default("v2"),
