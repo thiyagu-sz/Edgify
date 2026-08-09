@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import posthog from "posthog-js";
 import { authClient } from "@/lib/auth-client";
 
 export function SignOutButton() {
@@ -10,6 +11,7 @@ export function SignOutButton() {
 
   async function handleSignOut() {
     setPending(true);
+    posthog.reset();
     await authClient.signOut();
     router.push("/sign-in");
     router.refresh();

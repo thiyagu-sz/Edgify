@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import {
   closure,
   formatMinutes,
@@ -48,6 +49,7 @@ export function ConceptPanel({
   onSubTab,
   onSelect,
   onToggleMastered,
+  analyticsEnabled,
   onQuizCorrect,
   onCardIndex,
   onOpenPlan,
@@ -62,6 +64,7 @@ export function ConceptPanel({
   onSubTab: (tab: "overview" | "quiz" | "cards") => void;
   onSelect: (slug: string) => void;
   onToggleMastered: () => void;
+  analyticsEnabled: boolean;
   onQuizCorrect: () => void;
   onCardIndex: (index: number) => void;
   onOpenPlan: () => void;
@@ -121,7 +124,7 @@ export function ConceptPanel({
         />
       </div>
       <div className="subpanel" hidden={subTab !== "quiz"} style={{ marginTop: 20 }}>
-        <ConceptQuiz detail={detail} onCorrect={onQuizCorrect} />
+        <ConceptQuiz detail={detail} analyticsEnabled={analyticsEnabled} onCorrect={onQuizCorrect} />
       </div>
       <div className="subpanel" hidden={subTab !== "cards"} style={{ marginTop: 20 }}>
         <Flashcards detail={detail} cardIndex={cardIndex} onCardIndex={onCardIndex} />
@@ -366,9 +369,11 @@ export function ReadinessRing({
  */
 function ConceptQuiz({
   detail,
+  analyticsEnabled,
   onCorrect,
 }: {
   detail: DetailState | undefined;
+  analyticsEnabled: boolean;
   onCorrect: () => void;
 }) {
   const [picked, setPicked] = useState<number | null>(null);
@@ -394,6 +399,12 @@ function ConceptQuiz({
               onClick={() => {
                 if (picked !== null) return;
                 setPicked(i);
+                if (analyticsEnabled) {
+                  posthog.capture("concept_quiz_answered", {
+                    is_correct: i === quiz.answer,
+                    option_count: quiz.options.length,
+                  });
+                }
                 if (i === quiz.answer) onCorrect();
               }}
             >

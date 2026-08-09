@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import posthog from "posthog-js";
 import type { ConceptDetail } from "@/lib/ai/schemas";
 import { exportDoc, exportPdf } from "@/lib/export";
 import { viewBoxHeightFor } from "@/lib/graph/layout";
@@ -301,6 +302,10 @@ export function KnowledgeGraph({
 
   const onFilePicked = useCallback(
     async (file: File) => {
+      posthog.capture("knowledge_graph_upload_started", {
+        file_type: file.name.split(".").pop()?.toLowerCase() ?? "unknown",
+        file_size_bytes: file.size,
+      });
       setModalOpen(true);
       setModalFile({ name: file.name, size: file.size });
       setModalError(null);
@@ -369,6 +374,9 @@ export function KnowledgeGraph({
       // is what makes it survive a reload, and it cannot fail in a way the user needs to see.
       // In demo mode there is no write at all, and the local recolour is the whole behaviour.
       setMastery((prev) => new Map(prev).set(slug, state));
+      if (transport.canUpload) {
+        posthog.capture("concept_mastery_updated", { mastery_state: state });
+      }
       transport.saveMastery(concept, state);
     },
     [graph, transport],
@@ -522,6 +530,7 @@ export function KnowledgeGraph({
                       mastery.get(selectedConcept.slug) === "known" ? "locked" : "known",
                     )
                   }
+                  analyticsEnabled={transport.canUpload}
                   onQuizCorrect={() => {
                     // The prototype promotes a locked concept to "in progress" on a correct
                     // answer, and leaves a mastered one alone.

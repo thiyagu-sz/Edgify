@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import posthog from "posthog-js";
 
 /**
  * Workspace top bar — shared chrome for the authenticated app, ported from the prototype's
@@ -14,9 +16,26 @@ import { usePathname } from "next/navigation";
  *
  * A Client Component only because `usePathname` needs one — there is no other state here.
  */
-export function TopBar() {
+interface TopBarProps {
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+  };
+}
+
+export function TopBar({ user }: TopBarProps) {
   const pathname = usePathname();
   const onGraph = pathname?.startsWith("/graph") ?? false;
+
+  useEffect(() => {
+    if (!user) return;
+
+    posthog.identify(user.id, {
+      email: user.email,
+      name: user.name,
+    });
+  }, [user]);
 
   return (
     <header className="topbar">
