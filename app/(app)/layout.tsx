@@ -21,7 +21,13 @@ export default async function AppLayout({
   }
   return (
     <div className="edgify-workspace">
-      <TopBar />
+      <TopBar
+        user={{
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.name,
+        }}
+      />
       {children}
     </div>
   );

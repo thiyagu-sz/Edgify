@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import posthog from "posthog-js";
 import { FORMATS, getFormat } from "@/lib/ai/prompts";
 import { sanitizeQuiz, type Quiz } from "@/lib/ai/schemas";
 import { exportDoc, exportPdf, quizToMarkdown } from "@/lib/export";
@@ -108,6 +109,11 @@ export function QuickNotes({
         }
         md += decoder.decode();
         setOut({ kind: "prose", md, notice: null, streaming: false, chars, label: fmt.label });
+        posthog.capture("revision_notes_generated", {
+          format: fmt.id,
+          output_type: "prose",
+          source_character_count: chars,
+        });
         await refreshQuota();
         return;
       }
@@ -129,10 +135,20 @@ export function QuickNotes({
             });
           } else {
             setOut({ kind: "quiz", quiz, notice: body.notice ?? null, chars, label: fmt.label, genId });
+            posthog.capture("revision_notes_generated", {
+              format: fmt.id,
+              output_type: "quiz",
+              source_character_count: chars,
+            });
           }
         } else {
           const md = typeof body.data === "string" ? body.data : "";
           setOut({ kind: "prose", md, notice: body.notice ?? null, streaming: false, chars, label: fmt.label });
+          posthog.capture("revision_notes_generated", {
+            format: fmt.id,
+            output_type: "prose",
+            source_character_count: chars,
+          });
         }
         await refreshQuota();
       } else if (kind === "busy") {
@@ -219,8 +235,13 @@ export function QuickNotes({
       };
 
       if (typeof body.text === "string") {
+        const characterCount = body.charCount ?? body.text.length;
         setText(body.text);
-        setFileChip(`${file.name} · ${(body.charCount ?? body.text.length).toLocaleString()} chars`);
+        setFileChip(`${file.name} · ${characterCount.toLocaleString()} chars`);
+        posthog.capture("source_file_extracted", {
+          file_type: file.name.split(".").pop()?.toLowerCase() ?? "unknown",
+          extracted_character_count: characterCount,
+        });
         return;
       }
 
