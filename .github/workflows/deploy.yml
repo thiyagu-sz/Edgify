@@ -114,6 +114,22 @@ jobs:
             NODE_ENV=production
             BETTER_AUTH_URL=${{ secrets.BETTER_AUTH_URL }}
             GRAPH_BUILD_BUDGET_MS=200000
+            # SERVER-side Sentry. Read at runtime by sentry.server.config.ts, so a plain env var
+            # is enough — no rebuild needed. Not in Secret Manager: a DSN is a PUBLIC ingestion
+            # key, not a credential (lib/env.ts, instrumentation-client.ts), and putting it there
+            # would add a runtime dependency for a value that already ships in the client bundle.
+            # Held as a GitHub secret only to keep the literal DSN out of this file, which would
+            # otherwise trip the DSN arm of the AGENTS.md secret scan.
+            #
+            # Until this was set, log.error's Sentry.captureException was a silent no-op in
+            # production: lib/env.ts types SENTRY_DSN as optionalUrl, so the app booted happily
+            # with no error reporting at all — the failure mode that looks exactly like "no errors".
+            #
+            # NOTE: the BROWSER half (NEXT_PUBLIC_SENTRY_DSN) is deliberately NOT here. Next
+            # inlines NEXT_PUBLIC_* at build time, so a runtime env var cannot reach the client
+            # bundle; it needs a Dockerfile build arg. Server-side capture is what the docs/09 §3.1
+            # failure-injection drills depend on, so that half is sequenced first.
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             # Without this the internal dashboard 404s for EVERYONE in production, including the
             # operator — lib/admin.ts fails closed on an empty allowlist, by design. Not in Secret
             # Manager because it is not a credential; a GitHub secret keeps it out of the workflow
