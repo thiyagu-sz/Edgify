@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18.4 17.4" width="18.4" height="17.4" fill="none" role="img" aria-label="Edgify">
+  <title>Edgify mark</title>
+  <desc>Edgify mark, ink. Prototype geometry, 24-unit box cropped to ink.</desc>
+  <line x1="9.2" y1="2.7" x2="2.7" y2="14.7" stroke="#111111" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="9.2" y1="2.7" x2="15.7" y2="14.7" stroke="#111111" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="2.7" y1="14.7" x2="15.7" y2="14.7" stroke="#111111" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="9.2" cy="2.7" r="2.7" fill="#111111"/>
+  <circle cx="2.7" cy="14.7" r="2.7" fill="#111111"/>
+  <circle cx="15.7" cy="14.7" r="2.7" fill="#111111"/>
+</svg>

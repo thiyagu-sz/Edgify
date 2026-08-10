@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none" role="img" aria-label="Edgify">
+  <title>Edgify</title>
+  <desc>Edgify app icon — the prototype landing-page mark on the landing background.</desc>
+  <rect width="64" height="64" fill="#0a0a0a"/>
+  <line x1="32" y1="14.887" x2="13.4609" y2="49.113" stroke="#ffffff" stroke-width="4.5635" stroke-linecap="round"/>
+  <line x1="32" y1="14.887" x2="50.5391" y2="49.113" stroke="#ffffff" stroke-width="4.5635" stroke-linecap="round"/>
+  <line x1="13.4609" y1="49.113" x2="50.5391" y2="49.113" stroke="#ffffff" stroke-width="4.5635" stroke-linecap="round"/>
+  <circle cx="32" cy="14.887" r="7.7009" fill="#ffffff"/>
+  <circle cx="13.4609" cy="49.113" r="7.7009" fill="#ffffff"/>
+  <circle cx="50.5391" cy="49.113" r="7.7009" fill="#60a5fa"/>
+</svg>
