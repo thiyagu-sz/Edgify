@@ -81,9 +81,24 @@ wrong default for a new project. Better Auth is MIT-licensed, scaffolds its sche
 has a Drizzle adapter, and costs nothing at any scale because it is a library rather than a
 service.
 
-**Use Google OAuth only.** No passwords means no reset flow, no verification emails, no
-credential storage, and no transactional email provider. It removes an entire category of
-work and of security mistakes. Add email sign-in later only if users ask for it.
+**Google OAuth, plus email/password.** The original decision here was Google only — no passwords
+means no reset flow, no verification emails, no credential storage and no transactional email
+provider — with the note to "add email sign-in later only if users ask for it". That happened, and
+email/password is now enabled in `lib/auth.ts`.
+
+What that costs, stated plainly:
+
+- **No email verification.** There is still no transactional email provider, so `requireEmailVerification`
+  is off. A sign-up address is unproven.
+- **Account linking is therefore refused, by design.** Better Auth only links a Google login to an
+  existing user when that user's local email is already verified. Since ours never is, a
+  password account and a Google login on the same address stay separate, and the user is told so.
+  Loosening this (`requireLocalEmailVerified: false`) would let someone register a victim's address
+  before their first Google sign-in and capture it — see the long note in `lib/auth.ts`.
+- **No password reset.** `/sign-in` leaves room for it; the flow needs email delivery first.
+
+Adding a transactional email provider closes all three at once, and is the prerequisite for any of
+them. `lib/auth.config.test.ts` pins these settings so none of it regresses quietly.
 
 *Honest caveat:* Better Auth is young and some teams have reported rough edges. Prototype the
 login flow first, in Phase 1, before the rest of the app depends on it.

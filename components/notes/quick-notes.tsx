@@ -24,6 +24,69 @@ const STREAM_TIMEOUT_MS = 45_000;
 
 type Notice = "demo" | "quota" | null;
 
+/**
+ * The uploaded document's lifecycle (W3, docs/05), surfaced in the input card.
+ *
+ * `uploading` and `extracting` are two genuinely different things — the bytes leaving the browser,
+ * then the server parsing them — and the split is measured, not simulated: `XMLHttpRequest`
+ * reports real upload progress and fires `upload.onload` the moment the request body is fully
+ * sent, which is exactly the boundary between the two. One request, no polling, no invented
+ * percentages.
+ */
+type DocState =
+  | { kind: "idle" }
+  | { kind: "uploading"; name: string; percent: number | null }
+  | { kind: "extracting"; name: string }
+  | { kind: "ready"; name: string; chars: number }
+  | { kind: "error"; message: string };
+
+type ExtractBody = { text?: string; charCount?: number; message?: string };
+
+/** The catalogue's generic fallback (docs/04 §7) — never a status code or a stack. */
+const EXTRACT_FAILED =
+  "That file couldn't be read. It may be damaged — try re-saving or exporting it again.";
+
+/**
+ * POST the file to /api/documents/extract, reporting the upload→extract handover as it happens.
+ *
+ * `fetch` cannot express this: it resolves only once the response is complete, so with it the
+ * whole operation is a single opaque wait and "Uploading…" could only ever be a guess. XHR
+ * exposes the send phase, so both states are real. Same route, same contract, same single request.
+ */
+function extractDocument(
+  file: File,
+  onPhase: (phase: { kind: "uploading"; percent: number | null } | { kind: "extracting" }) => void,
+): Promise<ExtractBody> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/documents/extract");
+
+    xhr.upload.onprogress = (e) => {
+      onPhase({
+        kind: "uploading",
+        percent: e.lengthComputable && e.total > 0 ? Math.round((e.loaded / e.total) * 100) : null,
+      });
+    };
+    // The body is fully sent; everything after this is the server reading the document.
+    xhr.upload.onload = () => onPhase({ kind: "extracting" });
+
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText) as ExtractBody);
+      } catch {
+        resolve({ message: EXTRACT_FAILED });
+      }
+    };
+    // A dropped connection or an aborted request is ours to explain, not the user's to decode.
+    xhr.onerror = () => resolve({ message: "Something went wrong on our side. Please try again in a moment." });
+    xhr.onabort = () => resolve({ message: EXTRACT_FAILED });
+
+    const form = new FormData();
+    form.set("file", file);
+    xhr.send(form);
+  });
+}
+
 type OutState =
   | { kind: "empty" }
   | { kind: "loading"; label: string }
@@ -43,8 +106,16 @@ export function QuickNotes({
   const [out, setOut] = useState<OutState>({ kind: "empty" });
   const [remaining, setRemaining] = useState(initialRemaining);
   const [limit, setLimit] = useState(initialLimit);
-  /** The upload chip: null when hidden, else the label beside the file icon. */
-  const [fileChip, setFileChip] = useState<string | null>(null);
+  /** The uploaded document's visible state. Idle means "no document involved". */
+  const [doc, setDoc] = useState<DocState>({ kind: "idle" });
+  /**
+   * Extracted document text — held here and NEVER rendered. It is the source the generator reads
+   * when a document is loaded, which is why the textarea no longer has to carry it: dumping a
+   * whole PDF into the paste box made the input area look broken and gave the user a wall of text
+   * to scroll past for no benefit. The wire contract to /api/notes/generate is unchanged; only
+   * where the client keeps the string has moved.
+   */
+  const [docText, setDocText] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const genIdRef = useRef(0);
@@ -52,6 +123,9 @@ export function QuickNotes({
   const runningRef = useRef(false);
 
   const format = getFormat(formatId) ?? FORMATS[0];
+  /** A loaded document is the source material; otherwise it is whatever is in the textarea. */
+  const source = docText ?? text;
+  const docLoaded = docText !== null;
 
   const refreshQuota = useCallback(async () => {
     try {
@@ -69,7 +143,7 @@ export function QuickNotes({
     // A run in flight owns the output panel. Without this, ⌘Enter during a stream starts a
     // second generation that races the first into the same state (and spends a second quota).
     if (runningRef.current) return;
-    const content = text.trim();
+    const content = source.trim();
     const fmt = getFormat(formatId) ?? FORMATS[0];
     if (content.length < MIN_CHARS) {
       setOut({
@@ -177,9 +251,18 @@ export function QuickNotes({
       clearTimeout(timeout);
       runningRef.current = false;
     }
-  }, [text, formatId, refreshQuota]);
+  }, [source, formatId, refreshQuota]);
+
+  /** Drop the document and hand the textarea back to the user. */
+  const clearDoc = useCallback(() => {
+    setDocText(null);
+    setDoc({ kind: "idle" });
+  }, []);
 
   function loadSample() {
+    // The sample IS the source material, so a loaded document has to go — otherwise it would keep
+    // winning over the text the user just asked for, and "Load sample" would appear to do nothing.
+    clearDoc();
     setText(SAMPLE);
     textRef.current?.focus();
   }
@@ -198,54 +281,51 @@ export function QuickNotes({
   }, [out]);
 
   /**
-   * Upload → extract → fill the textarea (W3, docs/05).
+   * Upload → extract → ready (W3, docs/05), reported as it happens.
    *
-   * The extracted text is shown rather than hidden, deliberately: the user can see at a glance
-   * whether extraction worked, which turns a silent failure into an obvious one. Extraction is
-   * side-effect free on the server — no document row, no quota, no model call — so trying a file
-   * costs nothing and the user can edit the result before generating.
+   * The extracted text is deliberately NOT written to the textarea any more. Showing it was
+   * meant to prove extraction worked, but a whole document pasted into the input box reads as a
+   * glitch rather than as confirmation. The named states below prove it instead, and say more:
+   * a silent failure is now an explicit `error` state rather than an empty box.
+   *
+   * Extraction stays side-effect free on the server — no document row, no quota, no model call
+   * (app/api/documents/extract) — so trying a file still costs the user nothing.
    */
   const onFilePicked = useCallback(async (file: File) => {
     if (runningRef.current) return;
-    setFileChip(`Reading ${file.name}…`);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      const res = await fetch("/api/documents/extract", { method: "POST", body: form });
-      const body = (await res.json()) as {
-        text?: string;
-        charCount?: number;
-        message?: string;
-      };
+    // Synchronous, before any await: the user must never watch an unchanged screen after picking.
+    setDocText(null);
+    setDoc({ kind: "uploading", name: file.name, percent: null });
 
-      if (typeof body.text === "string") {
-        setText(body.text);
-        setFileChip(`${file.name} · ${(body.charCount ?? body.text.length).toLocaleString()} chars`);
-        return;
-      }
+    const body = await extractDocument(file, (phase) => {
+      setDoc(
+        phase.kind === "uploading"
+          ? { kind: "uploading", name: file.name, percent: phase.percent }
+          : { kind: "extracting", name: file.name },
+      );
+    });
 
-      // Every failure already carries its own next action (docs/04 §7) — the scanned-PDF message
-      // points at pasting, the oversize one at a smaller file. Do not append another.
-      setFileChip(null);
-      setOut({
-        kind: "error",
-        title: "Couldn't read that file",
-        message: body.message ?? "That file couldn't be read. It may be damaged — try re-saving or exporting it again.",
+    if (typeof body.text === "string" && body.text.trim().length > 0) {
+      setDocText(body.text);
+      setDoc({
+        kind: "ready",
+        name: file.name,
+        chars: body.charCount ?? body.text.length,
       });
-    } catch {
-      setFileChip(null);
-      setOut({
-        kind: "error",
-        title: "Couldn't read that file",
-        message: "Something went wrong on our side. Please try again in a moment.",
-      });
+      return;
     }
+
+    // Every failure already carries its own next action (docs/04 §7) — the scanned-PDF message
+    // points at pasting, the oversize one at a smaller file. Do not append another.
+    setDoc({ kind: "error", message: body.message ?? EXTRACT_FAILED });
   }, []);
 
   const quota = quotaState(remaining, limit);
   // Disabled for the whole run — the spinner AND the streaming phase. Re-enabling once the first
   // token lands would invite a second generation on top of the one still writing.
   const busy = out.kind === "loading" || (out.kind === "prose" && out.streaming);
+  /** A document mid-flight is not yet source material, so nothing may generate from it. */
+  const docBusy = doc.kind === "uploading" || doc.kind === "extracting";
 
   return (
     <div className="qn-grid">
@@ -258,11 +338,11 @@ export function QuickNotes({
               className="link"
               type="button"
               onClick={() => fileRef.current?.click()}
-              disabled={busy}
+              disabled={busy || docBusy}
             >
               <IconUpload /> Upload file
             </button>
-            <button className="link" type="button" onClick={loadSample}>
+            <button className="link" type="button" onClick={loadSample} disabled={docBusy}>
               <IconSample /> Load sample
             </button>
           </div>
@@ -279,34 +359,19 @@ export function QuickNotes({
             if (file) void onFilePicked(file);
           }}
         />
-        {fileChip !== null && (
-          <div className="filechip show">
-            <IconSample />
-            {/* Model-free but still untrusted: a filename is user-supplied and React escapes it. */}
-            <span>{fileChip}</span>
-            <span
-              className="x"
-              role="button"
-              tabIndex={0}
-              aria-label="Remove file"
-              onClick={() => setFileChip(null)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") setFileChip(null);
-              }}
-            >
-              ✕
-            </span>
-          </div>
-        )}
+        <DocStatus doc={doc} onRemove={clearDoc} onRetry={() => fileRef.current?.click()} />
         <textarea
           ref={textRef}
           className="paste"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onTextKeyDown}
+          // A loaded document is the source material, so the box is not an editable second
+          // source that would silently lose to it. Removing the document hands it straight back.
+          disabled={docLoaded}
           placeholder="Paste your notes, a textbook section, or an article — or upload a PDF, DOCX, TXT or MD file above…"
         />
-        <div className="char">{text.length.toLocaleString()} characters</div>
+        <div className="char">{source.length.toLocaleString()} characters</div>
         <div className="fmt-label">Revision format</div>
         <div className="format-chips">
           {FORMATS.map((f) => (
@@ -323,7 +388,12 @@ export function QuickNotes({
         </div>
         <div className="fmt-desc">{format.desc}</div>
         <div className="gen-row">
-          <button className="btn-primary" type="button" onClick={() => void generate()} disabled={busy}>
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={() => void generate()}
+            disabled={busy || docBusy}
+          >
             <IconArrow /> Generate revision notes
           </button>
           <div className="gen-hint">
@@ -504,6 +574,99 @@ export function OutputHead({
         <button type="button" onClick={onRegenerate}>
           <IconRefresh /> Regenerate
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The document's state, inline in the input card (STATE 1–5).
+ *
+ * Built from the W4 upload primitives already in the stylesheet — `.file-row`, `.file-ic`,
+ * `.mspin` — so this is the same loading vocabulary the graph modal uses, not a second one. It
+ * stays inline and compact deliberately: the graph's full-screen overlay is the wrong weight for
+ * a step that usually takes a second or two.
+ *
+ * `role="status"` announces each transition to a screen reader without stealing focus; the
+ * failure is a `role="alert"` because it needs saying at once. Nothing here is focus-trapped.
+ */
+function DocStatus({
+  doc,
+  onRemove,
+  onRetry,
+}: {
+  doc: DocState;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
+  if (doc.kind === "idle") return null;
+
+  if (doc.kind === "error") {
+    return (
+      <div className="file-row doc-status err" role="alert">
+        <div className="file-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+            <path d="M12 8v5M12 16.5v.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </div>
+        <div className="doc-body">
+          <div className="fn">Couldn&apos;t process this document</div>
+          <div className="fs">{doc.message}</div>
+        </div>
+        <div className="doc-acts">
+          <button className="link" type="button" onClick={onRetry}>
+            Try again
+          </button>
+          <button className="doc-x" type="button" onClick={onRemove} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (doc.kind === "ready") {
+    return (
+      <div className="file-row doc-status done" role="status">
+        <div className="file-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="doc-body">
+          <div className="fn">Document ready</div>
+          {/* A filename is user-supplied and untrusted; React escapes it (.claude/rules/ui.md). */}
+          <div className="fs">
+            {doc.name} · {doc.chars.toLocaleString()} characters
+          </div>
+        </div>
+        <div className="doc-acts">
+          <button className="doc-x" type="button" onClick={onRemove} aria-label="Remove document">
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const uploading = doc.kind === "uploading";
+  return (
+    <div className="file-row doc-status" role="status">
+      <div className="file-ic" aria-hidden="true">
+        <div className="mspin" />
+      </div>
+      <div className="doc-body">
+        <div className="fn">
+          {uploading
+            ? `Uploading document…${doc.percent !== null ? ` ${doc.percent}%` : ""}`
+            : "Extracting document…"}
+        </div>
+        <div className="fs">
+          {uploading
+            ? doc.name
+            : "Reading your document and preparing it for processing."}
+        </div>
       </div>
     </div>
   );

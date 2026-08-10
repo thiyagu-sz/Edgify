@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { UserMenu } from "@/components/user-menu";
 
 /**
  * Workspace top bar — shared chrome for the authenticated app, ported from the prototype's
@@ -14,7 +15,7 @@ import { usePathname } from "next/navigation";
  *
  * A Client Component only because `usePathname` needs one — there is no other state here.
  */
-export function TopBar() {
+export function TopBar({ userEmail }: { userEmail?: string }) {
   const pathname = usePathname();
   const onGraph = pathname?.startsWith("/graph") ?? false;
 
@@ -51,6 +52,9 @@ export function TopBar() {
         </Link>
       </div>
       <div className="nav-spacer" />
+      {/* Optional so an unauthenticated surface renders no profile at all rather than a blank
+          one — only the (app) layout, which has already proven a session, passes an address. */}
+      {userEmail ? <UserMenu email={userEmail} /> : null}
     </header>
   );
 }

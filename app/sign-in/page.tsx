@@ -1,32 +1,41 @@
-"use client";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Suspense } from "react";
+import { AuthForm } from "@/components/auth/auth-form";
+import { AuthShell } from "@/components/auth/auth-shell";
 
-import { useState } from "react";
-import { authClient } from "@/lib/auth-client";
+export const metadata: Metadata = {
+  title: "Sign in — Edgify",
+  description: "Sign in to your Edgify study workspace.",
+};
 
+/**
+ * Sign in — Google or email/password (docs/02-tech-stack.md).
+ *
+ * `AuthForm` reads `?error=` with `useSearchParams`, which suspends during prerender, so it sits
+ * behind a Suspense boundary. Without one this whole route would be forced dynamic.
+ */
 export default function SignInPage() {
-  const [pending, setPending] = useState(false);
-
-  async function handleGoogle() {
-    setPending(true);
-    await authClient.signIn.social({ provider: "google", callbackURL: "/notes" });
-    // On success the browser is redirected to Google, then back to the workspace.
-    setPending(false);
-  }
-
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Edgify</h1>
-        <p className="text-sm text-zinc-500">Sign in to your study workspace.</p>
-      </div>
-      <button
-        type="button"
-        onClick={handleGoogle}
-        disabled={pending}
-        className="rounded-md bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
-      >
-        {pending ? "Redirecting…" : "Continue with Google"}
-      </button>
-    </main>
+    <AuthShell
+      eyebrow="Edgify workspace"
+      heading="Sign in"
+      subheading="Pick up where you left off."
+      display={
+        <>
+          Welcome <span className="accent">back.</span>
+        </>
+      }
+      lede="Your notes, graphs and revision are where you left them. Sign in to keep going."
+      footer={
+        <>
+          New to Edgify? <Link href="/sign-up">Create an account</Link>
+        </>
+      }
+    >
+      <Suspense fallback={<div className="auth-fallback" aria-hidden="true" />}>
+        <AuthForm mode="sign-in" />
+      </Suspense>
+    </AuthShell>
   );
 }

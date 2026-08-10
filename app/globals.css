@@ -95,6 +95,32 @@ body {
 .ctx .sub { color: var(--muted-soft); font-weight: 400; flex-shrink: 0; }
 .ctx svg { color: var(--muted); flex-shrink: 0; }
 
+/* Account control (top bar, right). Same borders, radii, tokens and hover as `.ctx` beside it —
+   no new visual language, just the one control the workspace was missing. */
+.usermenu { position: relative; flex-shrink: 0; }
+.user-trigger { display: flex; align-items: center; gap: 8px; max-width: 260px; padding: 5px 8px 5px 5px;
+  border: 1px solid var(--hairline); border-radius: var(--pill); background: var(--canvas);
+  font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer; transition: background .15s; }
+.user-trigger:hover { background: var(--surface-soft); }
+.user-av { width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: var(--on-primary);
+  font-size: 12px; font-weight: 600; display: grid; place-items: center; flex-shrink: 0; }
+.user-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-caret { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; }
+.user-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; min-width: 220px; max-width: 280px;
+  background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: 0 10px 30px rgba(17,17,17,.12), 0 0 0 1px rgba(17,17,17,.02); padding: 6px; }
+.user-pop-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 6px; }
+.user-pop-head .lbl { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-soft); }
+.user-pop-head .addr { font-size: 13px; color: var(--ink); word-break: break-all; line-height: 1.4; }
+.user-pop-sep { height: 1px; background: var(--hairline); margin: 4px 0; }
+.user-pop-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px;
+  border-radius: var(--r-sm); background: none; font-size: 13.5px; font-weight: 500; color: var(--ink);
+  cursor: pointer; text-align: left; }
+.user-pop-item:hover { background: var(--surface-soft); }
+.user-pop-item:disabled { color: var(--muted-soft); cursor: default; }
+.user-pop-item svg { width: 15px; height: 15px; color: var(--muted); flex-shrink: 0; }
+.user-pop-err { font-size: 12.5px; color: var(--error); line-height: 1.45; padding: 4px 10px 6px; }
+
 .btn-primary { background: var(--primary); color: var(--on-primary); font-size: 14px; font-weight: 600; height: 40px;
   padding: 0 18px; border-radius: var(--r-md); display: inline-flex; align-items: center; gap: 7px; transition: background .15s; }
 .btn-primary:active { background: var(--primary-active); }
@@ -126,6 +152,34 @@ body {
 .filechip.show { display: inline-flex; }
 .filechip svg { width: 15px; height: 15px; color: var(--muted); }
 .filechip .x { margin-left: 2px; color: var(--muted-soft); cursor: pointer; font-weight: 600; }
+/* Inline document status (W3 upload → extract → ready). Reuses the W4 `.file-row`/`.file-ic`/
+   `.mspin` primitives defined further down so there is one loading vocabulary, not two; only the
+   placement differs — inline in the input card rather than in the graph's full-screen overlay.
+
+   Every selector is doubled up as `.file-row.doc-status` deliberately. A bare `.doc-status` ties
+   on specificity with `.file-row`, and since `.file-row` is declared LATER in this file it would
+   win every tie — silently reinstating the modal's padding, margin and `word-break: break-all`.
+   The extra class makes these rules win on specificity, so they no longer depend on source order. */
+.file-row.doc-status { margin: 0 0 12px; padding: 12px 14px; flex-wrap: wrap; }
+/* The actions never shrink, so on a narrow card the text column has to be able to claim a usable
+   width and push them onto their own line — otherwise it is squeezed to a few characters. */
+.file-row.doc-status .doc-body { flex: 1 1 140px; min-width: 0; }
+/* The title is prose and must break only between words; `word-break` and `overflow-wrap` are
+   different properties, so the modal's `break-all` has to be reset by name or the sentence
+   shatters ("Couldn't process this docume / nt"). A long unbroken filename in `.fs` still needs
+   to break anywhere it can. */
+.file-row.doc-status .fn { font-size: 13.5px; font-weight: 600; word-break: normal; overflow-wrap: break-word; }
+.file-row.doc-status .fs { margin-top: 2px; line-height: 1.45; word-break: normal; overflow-wrap: anywhere; }
+.file-row.doc-status .doc-acts { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.file-row.doc-status .doc-acts .link { font-size: 12.5px; font-weight: 500; color: var(--ink); background: none; cursor: pointer; }
+.file-row.doc-status .doc-acts .link:hover { color: var(--muted); }
+.file-row.doc-status .doc-x { color: var(--muted-soft); font-weight: 600; font-size: 13px; background: none; cursor: pointer; line-height: 1; padding: 2px; }
+.file-row.doc-status .doc-x:hover { color: var(--ink); }
+.file-row.doc-status.done .file-ic { color: var(--success); }
+.file-row.doc-status.err { border-color: var(--error); }
+.file-row.doc-status.err .file-ic { color: var(--error); }
+/* A loaded document IS the source material, so the paste box stands down until it is removed. */
+textarea.paste:disabled { background: var(--surface-soft); color: var(--muted); cursor: not-allowed; }
 textarea.paste { width: 100%; min-height: 210px; resize: vertical; border: 1px solid var(--hairline); border-radius: var(--r-lg);
   padding: 14px 16px; font-size: 14.5px; line-height: 1.6; color: var(--ink); background: var(--canvas); outline: none; transition: border-color .12s; }
 textarea.paste:focus { border-color: var(--ink); }
@@ -403,6 +457,12 @@ svg.graph { display: block; width: 100%; height: auto; }
   .legend { display: none; }
   .nav-spacer { display: none; }
   .pill-group { order: 3; width: 100%; justify-content: center; }
+  /* The account control stays — it is the only way out. With `.nav-spacer` gone it needs its own
+     push to the right, and it drops to the avatar alone so a long address cannot wrap the bar.
+     The full email is still one tap away inside the menu (and in `title`). */
+  .usermenu { margin-left: auto; }
+  .user-email { display: none; }
+  .user-trigger { max-width: none; padding: 5px; }
   /* The prototype writes this as `.btn-primary span, .btn-secondary span { display:none }` — it
      collapses the icon+label toolbar buttons to icons on a narrow screen. Scoped to the graph
      toolbar here, deliberately. Applied globally it also hits the one button in the app whose
@@ -607,4 +667,167 @@ svg.graph { display: block; width: 100%; height: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   #landing .lx-hero > *, #landing .lx-card { animation: none !important; }
+}
+
+/* ============================================================================
+   AUTHENTICATION (app/sign-in, app/sign-up)
+
+   Dark and glassy, to the supplied reference composition — but built from Edgify's OWN dark
+   vocabulary rather than an imported one. The landing page is already #0a0a0a with a faded 64px
+   grid, blurred glows, gradient hairline borders and rgba(255,255,255,.05) glass; auth reuses
+   that language so the journey reads as one product: dark landing, dark auth, light workspace.
+   Type stays Inter. The mark is the existing one.
+
+   Every selector is `.auth*`. Nothing here is a `.lx-` class and nothing assigns a landing dark
+   token value to a custom property, so the leak scan in app/globals.test.ts stays exactly as
+   strict — it was not relaxed to accommodate this block.
+   ============================================================================ */
+.auth {
+  position: relative; isolation: isolate; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 0; background: #0a0a0a; color: #fff;
+  font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.auth a { text-decoration: none; }
+
+/* Ground: the landing's grid and glows, same values, scoped here. */
+.auth-grid-bg {
+  position: absolute; inset: 0; z-index: 0; opacity: 0.03; pointer-events: none;
+  background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 78%);
+}
+.auth-glow { position: absolute; z-index: 0; pointer-events: none; border-radius: 9999px; filter: blur(120px); }
+.auth-glow-a { width: 560px; height: 560px; background: rgba(96,165,250,.16); top: -180px; left: 50%; transform: translateX(-70%); }
+.auth-glow-b { width: 420px; height: 420px; background: rgba(52,211,153,.06); bottom: -160px; right: -120px; }
+
+.auth-wrap { position: relative; z-index: 1; width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+/* The translucent outer panel. */
+.auth-shell {
+  position: relative; overflow: hidden; border-radius: 24px;
+  background: rgba(255,255,255,.05); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  padding: 32px;
+}
+/* Gradient hairline — the landing's `.gborder` treatment, written under an auth-owned name so
+   the landing-scoping guard keeps its meaning. */
+.auth-shell::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  background: linear-gradient(225deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.22) 50%, rgba(255,255,255,0) 100%);
+  pointer-events: none;
+}
+.auth-layout { position: relative; display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: center; }
+
+/* Form card, light, sitting on the glass. */
+.auth-card {
+  background: rgba(255,255,255,.96); backdrop-filter: blur(12px);
+  border-radius: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.2);
+  padding: 24px; color: var(--body);
+}
+.auth-cardhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.auth-cardtitle .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-soft); }
+.auth-cardtitle h2 { margin-top: 4px; font-size: 26px; font-weight: 600; letter-spacing: -0.7px; color: var(--ink); line-height: 1.15; }
+.auth-cardtitle .sub { margin-top: 6px; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.auth-badge { flex-shrink: 0; width: 36px; height: 36px; border-radius: 10px; background: var(--primary); color: var(--on-primary); display: grid; place-items: center; }
+.auth-badge svg { width: 18px; height: 18px; }
+
+.auth-google { width: 100%; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--canvas); color: var(--ink); border: 1px solid var(--hairline); border-radius: 12px;
+  font-size: 14.5px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s; }
+.auth-google:hover:not(:disabled) { background: var(--surface-soft); border-color: var(--surface-strong); }
+.auth-google:disabled { color: var(--muted-soft); cursor: default; }
+.auth-google svg { width: 18px; height: 18px; flex-shrink: 0; }
+.auth-google:disabled svg { opacity: .5; }
+
+.auth-or { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: var(--muted-soft); font-size: 12px; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+
+.auth-fields { display: grid; gap: 14px; }
+.auth-field { display: grid; gap: 6px; }
+.auth-field label { font-size: 12px; color: var(--muted); font-weight: 500; }
+.auth-field input { width: 100%; padding: 10px 12px; font-size: 14px; color: var(--ink); background: var(--canvas);
+  border-radius: 12px; border: 0; box-shadow: 0 0 0 1px rgba(0,0,0,.1); outline: none; transition: box-shadow .12s; }
+.auth-field input::placeholder { color: var(--muted-soft); }
+.auth-field input:focus { box-shadow: 0 0 0 2px var(--ink); }
+.auth-field input:disabled { background: var(--surface-soft); color: var(--muted); cursor: not-allowed; }
+.auth-field input[aria-invalid="true"] { box-shadow: 0 0 0 1px var(--error); }
+
+.auth-pw { position: relative; }
+.auth-pw input { padding-right: 64px; }
+.auth-pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); height: 30px; padding: 0 10px;
+  border-radius: 8px; background: none; color: var(--muted); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.auth-pw-toggle:hover { color: var(--ink); background: var(--surface-soft); }
+
+.auth-hint { font-size: 11px; color: var(--muted-soft); line-height: 1.45; }
+.auth-hint.err { color: var(--error); }
+.auth-error { font-size: 12.5px; line-height: 1.5; color: #b42318; background: rgba(239,68,68,.08);
+  box-shadow: 0 0 0 1px rgba(239,68,68,.25); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+
+.auth-submit { width: 100%; margin-top: 4px; padding: 12px 16px; background: var(--primary); color: var(--on-primary);
+  border-radius: 12px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .15s; }
+.auth-submit:hover:not(:disabled) { background: var(--primary-active); }
+.auth-submit:disabled { background: var(--primary-disabled); color: var(--muted-soft); cursor: default; }
+
+.auth-alt { margin-top: 14px; font-size: 12px; color: var(--muted-soft); text-align: center; }
+.auth-alt a { color: var(--ink); font-weight: 600; }
+.auth-alt a:hover { text-decoration: underline; }
+.auth-fallback { min-height: 320px; }
+
+/* Copy column. */
+.auth-display { font-size: clamp(36px, 4.4vw, 60px); line-height: 1.05; font-weight: 600; letter-spacing: -1.6px; color: #fff; }
+.auth-display .accent { color: #60a5fa; }
+.auth-lede { margin-top: 16px; max-width: 46ch; font-size: 17px; line-height: 1.55; color: rgba(255,255,255,.8); }
+
+.auth-highlights { margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.auth-highlight { display: flex; align-items: flex-start; gap: 12px; }
+.auth-highlight .ic { flex-shrink: 0; width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+  backdrop-filter: blur(12px); display: grid; place-items: center; color: rgba(255,255,255,.9); }
+.auth-highlight .ic svg { width: 16px; height: 16px; }
+.auth-highlight .t { font-size: 13.5px; font-weight: 600; color: #fff; }
+.auth-highlight .d { margin-top: 2px; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,.7); }
+
+.auth-strip { margin-top: 32px; display: inline-flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: 16px; background: rgba(255,255,255,.96); backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.3), 0 0 0 1px rgba(255,255,255,.2); max-width: 100%; }
+.auth-strip-mark { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-soft); color: var(--ink); display: grid; place-items: center; flex-shrink: 0; }
+.auth-strip-mark svg { width: 20px; height: 20px; }
+.auth-strip-text { display: grid; gap: 2px; min-width: 0; }
+.auth-strip-text .k { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-soft); line-height: 1; font-weight: 600; }
+.auth-strip-text .v { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auth-strip-cta { margin-left: 4px; display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 8px 12px; border-radius: 12px; background: var(--primary); color: var(--on-primary);
+  font-size: 12px; font-weight: 600; transition: background .15s; }
+.auth-strip-cta:hover { background: var(--primary-active); }
+.auth-strip-cta svg { width: 14px; height: 14px; }
+
+.auth :focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 8px; }
+
+@media (max-width: 1024px) {
+  .auth-layout { grid-template-columns: 1fr; gap: 36px; }
+  /* Copy leads on a narrow screen; the form follows rather than pushing it off the fold. */
+  .auth-formcol { order: 2; }
+  .auth-copy { order: 1; }
+}
+@media (max-width: 720px) {
+  .auth { padding: 0; align-items: flex-start; }
+  .auth-wrap { padding: 0; }
+  .auth-shell { border-radius: 0; padding: 28px 20px 36px; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .auth-shell::before { display: none; }
+  .auth-highlights { grid-template-columns: 1fr; gap: 16px; margin-top: 24px; }
+  .auth-strip { margin-top: 24px; width: 100%; }
+  .auth-lede { font-size: 15.5px; }
+}
+@media (max-width: 420px) {
+  .auth-card { padding: 20px; }
+  .auth-cardtitle h2 { font-size: 23px; }
+  .auth-strip { gap: 10px; padding: 10px; }
+  .auth-strip-cta { padding: 8px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth * { transition: none !important; }
 }

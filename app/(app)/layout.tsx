@@ -21,7 +21,9 @@ export default async function AppLayout({
   }
   return (
     <div className="edgify-workspace">
-      <TopBar />
+      {/* The session is already resolved here to guard the route, so the top bar's profile
+          control is fed from it rather than refetching the same thing in the browser. */}
+      <TopBar userEmail={session.user.email} />
       {children}
     </div>
   );
