@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resetAnalytics, track } from "@/lib/analytics";
 import { authClient } from "@/lib/auth-client";
 
 /**
@@ -67,6 +68,13 @@ export function UserMenu({ email }: { email: string }) {
       // has to be inspected rather than merely awaited.
       const result = (await authClient.signOut()) as { error?: unknown } | undefined;
       if (result?.error) throw new Error("sign-out did not succeed");
+      /**
+       * Only after the sign-out is confirmed. `reset` clears the distinct id so the next person
+       * on a shared library machine is not attributed to this one — the same shared-machine case
+       * the error path below is written for.
+       */
+      track("signout_completed");
+      resetAnalytics();
       router.push("/sign-in");
       router.refresh();
     } catch {

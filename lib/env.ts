@@ -25,6 +25,16 @@ const optionalUrl = z.preprocess(
   z.url("must be a valid URL").optional(),
 );
 
+/**
+ * An optional string that also treats the empty string as "not set", so a committed template
+ * shipping `NAME=""` reads as absent rather than as a configured empty value. Same reasoning as
+ * `optionalUrl` above.
+ */
+const optionalString = z.preprocess(
+  (v) => (v === "" || v === undefined ? undefined : v),
+  z.string().optional(),
+);
+
 /** A named IANA time zone. A bad value must stop boot, not silently fall back to UTC. */
 const timeZone = z
   .string()
@@ -166,6 +176,40 @@ const envSchema = z.object({
    * caller their own data; this one shows them everyone's.
    */
   ADMIN_EMAILS: z.string().default(""),
+
+  // --- Launch: SEO and product analytics ------------------------------------
+  /**
+   * The PUBLIC canonical origin, used for `metadataBase`, canonical links, `robots.txt` and the
+   * sitemap. Defaults to the production domain, and that default is load-bearing.
+   *
+   * This exists because `BETTER_AUTH_URL` cannot do this job, despite being the same value in
+   * production. Metadata for a STATICALLY PRERENDERED page is resolved at BUILD time, and the
+   * Dockerfile builds with `BETTER_AUTH_URL="http://localhost:3000"` — so every share card in
+   * production shipped `og:image="http://localhost:3000/og-image.png"`, i.e. no preview image at
+   * all on Product Hunt, Twitter, LinkedIn or Slack. Verified in `.next/server/app/index.html`
+   * from a real `npm run build`, not inferred.
+   *
+   * Defaulting to the real origin rather than requiring a new variable is deliberate: it fixes
+   * the bug with NO change to the Dockerfile, the deploy workflow, Secret Manager or the Cloud
+   * Run service. Override it only for a preview deployment on another origin.
+   */
+  SITE_URL: z.url("must be a valid absolute URL").default("https://edgify.online"),
+
+  /**
+   * PostHog. Both are OPTIONAL and unset by default, so the SDK is a no-op until a key exists —
+   * the same pattern `SENTRY_DSN` already uses in this file, chosen so analytics can ship inert
+   * and be switched on by configuration rather than by a release.
+   *
+   * A PostHog project API key is a PUBLIC ingestion key, not a credential: it can only write
+   * events, never read them. `NEXT_PUBLIC_` is therefore correct and safe here, exactly as it is
+   * for `NEXT_PUBLIC_SENTRY_DSN`. The PERSONAL API key (which can read) is a real secret and must
+   * never appear in this schema or in the browser.
+   *
+   * Note `NEXT_PUBLIC_*` is inlined by Next at BUILD time, so setting this on the Cloud Run
+   * service does nothing — it needs the Dockerfile build arg (see Dockerfile).
+   */
+  NEXT_PUBLIC_POSTHOG_KEY: optionalString,
+  NEXT_PUBLIC_POSTHOG_HOST: z.url("must be a valid URL").default("https://us.i.posthog.com"),
 
   NODE_ENV: z
     .enum(["development", "production", "test"])

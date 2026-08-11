@@ -28,7 +28,13 @@ const cspReportOnly = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://lh3.googleusercontent.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.de.sentry.io",
+  // PostHog ingest. Both regions are listed because the host is configurable
+  // (NEXT_PUBLIC_POSTHOG_HOST) and a project created in the EU would otherwise be blocked the
+  // moment this policy is promoted to enforcing — a failure that would look like "analytics
+  // silently stopped" rather than an error. `assets.i.posthog.com` serves the SDK's lazily
+  // loaded chunks.
+  "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.de.sentry.io " +
+    "https://*.i.posthog.com https://*.posthog.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SiteFooter } from "@/components/site-footer";
+import { env } from "@/lib/env";
+import { OG_IMAGES, TWITTER_IMAGES } from "@/lib/seo";
+import { landingJsonLd, serialiseJsonLd } from "@/lib/structured-data";
 
 /**
  * The dark Fluxora landing page, ported from docs/reference/edgify-prototype.html (lines
@@ -16,10 +20,37 @@ import Link from "next/link";
  * removes nothing, so every element the prototype specifies is still present and unchanged.
  */
 
+const DESCRIPTION =
+  "Turn your notes, slides and PDFs into short, high-yield exam revision — and a dependency " +
+  "graph that shows exactly what to learn first.";
+
+/**
+ * `title` is set through `absolute` so the root layout's `%s — Edgify` template does not turn
+ * this into "Edgify — cram fast… — Edgify".
+ *
+ * The `openGraph` block is repeated rather than inherited because the root's version is the
+ * site-wide default; stating it here keeps the landing page's share card correct if the root copy
+ * ever changes for another reason. This is the URL that gets posted to Product Hunt.
+ */
 export const metadata: Metadata = {
-  title: "Edgify — cram fast, or understand deeply",
-  description:
-    "Turn your notes, slides and PDFs into short, high-yield exam revision — and a dependency graph that shows exactly what to learn first.",
+  title: { absolute: "Edgify — cram fast, or understand deeply" },
+  description: DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "Edgify — cram fast, or understand deeply",
+    description: DESCRIPTION,
+    url: "/",
+    type: "website",
+    // REQUIRED, not redundant. A page-level `openGraph` replaces the root's rather than merging
+    // with it, so omitting this ships a card with no image (lib/seo.ts).
+    images: OG_IMAGES,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Edgify — cram fast, or understand deeply",
+    description: DESCRIPTION,
+    images: TWITTER_IMAGES,
+  },
 };
 
 function BrandMark({ accentThirdNode = true }: { accentThirdNode?: boolean }) {
@@ -63,6 +94,15 @@ function DownloadIcon() {
 export default function LandingPage() {
   return (
     <div id="landing">
+      {/*
+        Schema.org JSON-LD. Content is entirely module constants (lib/structured-data.ts) with no
+        user or model input, and `<` is escaped there so the tag cannot be closed early — the two
+        conditions that make `dangerouslySetInnerHTML` safe here.
+      */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: serialiseJsonLd(landingJsonLd(env.SITE_URL)) }}
+      />
       <div className="lx-grid-bg" />
       <div
         className="lx-glow"
@@ -332,21 +372,8 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <footer className="lx-foot">
-          <div className="lx-brand" style={{ fontSize: 16 }}>
-            <BrandMark />
-            edgify
-          </div>
-          <div className="lx-navlinks">
-            <a href="#lx-features">Features</a>
-            <a href="#lx-modes">How it works</a>
-            <Link href="/demo">Try the demo</Link>
-            <Link href="/notes" style={{ color: "#fff" }}>
-              Launch app
-            </Link>
-          </div>
-          <div className="c">An academic study workspace</div>
-        </footer>
+        {/* The mark is passed in so this file keeps the single copy of that SVG. */}
+        <SiteFooter brandMark={<BrandMark />} />
       </div>
     </div>
   );

@@ -4,9 +4,21 @@ import { Suspense } from "react";
 import { AuthForm } from "@/components/auth/auth-form";
 import { AuthShell } from "@/components/auth/auth-shell";
 
+/**
+ * NOINDEX. A sign-in page answers no search query, and letting it into the index means it
+ * competes with the landing page for the brand query "edgify" — the one query that matters most
+ * at launch. `follow` stays on so link equity still flows back to `/`.
+ *
+ * `app/robots.ts` also disallows this path. The two are complementary, not redundant: robots.txt
+ * stops the crawl, this stops the indexing if the URL is ever discovered from an inbound link.
+ *
+ * `title` is a plain string so the root layout's `%s — Edgify` template applies — spelling out
+ * "— Edgify" here as well would render "Sign in — Edgify — Edgify".
+ */
 export const metadata: Metadata = {
-  title: "Sign in — Edgify",
+  title: "Sign in",
   description: "Sign in to your Edgify study workspace.",
+  robots: { index: false, follow: true },
 };
 
 /**

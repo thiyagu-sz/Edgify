@@ -44,3 +44,13 @@ next-env.d.ts
 # Sentry Config File
 .env.sentry-build-plugin
 .artifacts/
+
+# Patent / IPR working material — NEVER commit.
+# This repository is PUBLIC (verified against the GitHub API), and git history is permanent:
+# deleting a file later does not unpublish it. These paths hold patent disclosures, an IPR
+# filing receipt and the screenshots prepared for them. They are deliberately kept on disk and
+# out of version control.
+docs/patent/
+docs/previous-patent/
+patent-assets/
+docs/EDGIFY_just.md

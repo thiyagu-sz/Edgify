@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useRef, useState } from "react";
+import { track } from "@/lib/analytics";
 import { authClient } from "@/lib/auth-client";
 import {
   fieldErrors,
@@ -111,6 +112,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
     if (busy) return;
     setPending("google");
     setFormError(null);
+    /**
+     * The SUBMITTED event only. The browser leaves for Google on the next line, so there is no
+     * client-side moment at which a Google sign-in is known to have succeeded — the matching
+     * completion signal is the `identify` fired when the workspace loads
+     * (components/analytics/analytics-identity.tsx). Firing a "completed" here would count every
+     * abandoned consent screen as a conversion.
+     */
+    track({ name: isSignUp ? "signup_submitted" : "signin_submitted", props: { method: "google" } });
     try {
       await authClient.signIn.social({
         provider: "google",
@@ -148,6 +157,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setErrors({});
     setFormError(null);
     setPending("credentials");
+    track({ name: isSignUp ? "signup_submitted" : "signin_submitted", props: { method: "email" } });
 
     // Better Auth's client resolves with `{ error }` rather than rejecting, so the result has to
     // be inspected — a bare await would read every failure as a success.
@@ -167,9 +177,16 @@ export function AuthForm({ mode }: { mode: Mode }) {
     if (result?.error) {
       setPending(null);
       setFormError(messageFor(mode, result.error.code, result.error.status));
+      // Better Auth's error CODE, never its message and never the submitted email — the code is a
+      // fixed vocabulary, the message is not (lib/analytics.ts).
+      track({
+        name: "auth_failed",
+        props: { method: "email", mode, reason: result.error.code ?? "unknown" },
+      });
       return;
     }
 
+    track({ name: isSignUp ? "signup_completed" : "signin_completed", props: { method: "email" } });
     router.push(AFTER_AUTH);
     router.refresh();
   }

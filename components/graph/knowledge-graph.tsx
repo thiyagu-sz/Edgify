@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConceptDetail } from "@/lib/ai/schemas";
+import { track } from "@/lib/analytics";
 import { exportDoc, exportPdf } from "@/lib/export";
 import { viewBoxHeightFor } from "@/lib/graph/layout";
 import {
@@ -225,6 +226,9 @@ export function KnowledgeGraph({
       pollAbort.current?.abort();
       const controller = new AbortController();
       pollAbort.current = controller;
+      // The graph id is ours, not the user's content — but it buys nothing in an event, so the
+      // start is recorded bare and paired with completion/failure by the person's distinct id.
+      track("graph_build_started");
 
       for (;;) {
         if (controller.signal.aborted) return;
@@ -252,15 +256,25 @@ export function KnowledgeGraph({
               edges: body.edges ?? [],
               mastery: body.mastery ?? [],
             });
+            // A COUNT and a duration. Never `body.title` (the document's name) and never the
+            // concepts, which are model output derived from the user's material.
+            track({
+              name: "graph_build_completed",
+              props: { conceptCount: body.concepts.length, durationMs: Date.now() - startedAt },
+            });
             return;
           }
           if (body.status === "failed") {
             setStatus({ kind: "failed", message: body.message ?? BUILD_FAILED_MESSAGE });
+            // Not `body.message` — that is user-facing prose. A fixed reason is enough to watch
+            // the failure rate; Sentry carries the detail.
+            track({ name: "graph_build_failed", props: { reason: "build_failed" } });
             return;
           }
           if (!res.ok && res.status !== 429) {
             // 401/404 — nothing to wait for. A 429 is transient and worth another pass.
             setStatus({ kind: "failed", message: BUILD_FAILED_MESSAGE });
+            track({ name: "graph_build_failed", props: { reason: "unavailable" } });
             return;
           }
         } catch (error) {
@@ -383,6 +397,9 @@ export function KnowledgeGraph({
         }
         return slug;
       });
+      // No identifier — the slug is model output derived from the user's document (see the note
+      // on this event in lib/analytics.ts).
+      track("concept_opened");
       const concept = graph?.concepts.find((c) => c.slug === slug);
       // No-op when the detail is already cached or in flight — that guard lives in `loadDetail`,
       // so every caller gets it.

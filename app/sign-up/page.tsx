@@ -4,9 +4,11 @@ import { Suspense } from "react";
 import { AuthForm } from "@/components/auth/auth-form";
 import { AuthShell } from "@/components/auth/auth-shell";
 
+/** NOINDEX, for the same reasons as `/sign-in` — see the note there. */
 export const metadata: Metadata = {
-  title: "Create your account — Edgify",
+  title: "Create your account",
   description: "Create an Edgify account and start turning your material into high-yield notes.",
+  robots: { index: false, follow: true },
 };
 
 /** Create an account — the same experience as /sign-in, in its other state. */

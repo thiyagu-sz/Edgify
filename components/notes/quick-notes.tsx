@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { FORMATS, getFormat } from "@/lib/ai/prompts";
 import { sanitizeQuiz, type Quiz } from "@/lib/ai/schemas";
 import { exportDoc, exportPdf, quizToMarkdown } from "@/lib/export";
+import { fileKindOf, track } from "@/lib/analytics";
 import { quotaState } from "@/lib/notes/quota-display";
 import { renderMarkdown } from "@/lib/sanitize";
 
@@ -159,6 +160,20 @@ export function QuickNotes({
     runningRef.current = true;
     setOut({ kind: "loading", label: `Generating ${fmt.label.toLowerCase()}…` });
 
+    /**
+     * Analytics for the activation event. The format id and where the material came from travel;
+     * `content` never does, and neither does its length beyond the generic counter already shown
+     * in the UI. `startedAt` measures real user-perceived duration, streaming included.
+     */
+    const materialSource = docLoaded ? "upload" : "paste";
+    const startedAt = Date.now();
+    track({ name: "notes_generation_started", props: { format: fmt.id, source: materialSource } });
+    const completed = () =>
+      track({
+        name: "notes_generation_completed",
+        props: { format: fmt.id, source: materialSource, durationMs: Date.now() - startedAt },
+      });
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
     try {
@@ -182,6 +197,7 @@ export function QuickNotes({
         }
         md += decoder.decode();
         setOut({ kind: "prose", md, notice: null, streaming: false, chars, label: fmt.label });
+        completed();
         await refreshQuota();
         return;
       }
@@ -201,13 +217,20 @@ export function QuickNotes({
               title: "Unexpected quiz format",
               message: "The quiz came back in an unexpected format. Try generating it again.",
             });
+            track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "quiz_shape" } });
           } else {
             setOut({ kind: "quiz", quiz, notice: body.notice ?? null, chars, label: fmt.label, genId });
+            completed();
           }
         } else {
           const md = typeof body.data === "string" ? body.data : "";
           setOut({ kind: "prose", md, notice: body.notice ?? null, streaming: false, chars, label: fmt.label });
+          completed();
         }
+        // The generation still produced something; `notice: "quota"` is how the API says today's
+        // budget is spent and demo content was served instead (docs/04). A product surface, not
+        // an error — tracked so the funnel can tell "hit the ceiling" from "it broke".
+        if (body.notice === "quota") track("quota_reached");
         await refreshQuota();
       } else if (kind === "busy") {
         setOut({
@@ -215,12 +238,14 @@ export function QuickNotes({
           title: "The server is busy",
           message: body.message ?? "Server is busy, please try again in a moment.",
         });
+        track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "busy" } });
       } else if (kind === "auth") {
         setOut({
           kind: "error",
           title: "Session expired",
           message: body.message ?? "Please sign in again to continue.",
         });
+        track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "auth" } });
       } else if (kind === "message") {
         // Something the user can fix (too short / too long). Not a server fault, so it must not
         // read as one — docs/04 §7: say what happened, and offer the next action.
@@ -229,12 +254,16 @@ export function QuickNotes({
           title: "Check the source material",
           message: body.message ?? "There isn't enough text here to work with. Add a few paragraphs.",
         });
+        // `reason` is the API's own `X-Edgify-Kind`, a fixed vocabulary — never `body.message`,
+        // which is prose and could carry specifics about the user's material.
+        track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "message" } });
       } else {
         setOut({
           kind: "error",
           title: "Something went wrong",
           message: body.message ?? "Something went wrong on our side. Please try again in a moment.",
         });
+        track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "unexpected" } });
       }
     } catch {
       // Abort/timeout or network drop. Keep any partial stream; otherwise show the calm busy state.
@@ -247,11 +276,15 @@ export function QuickNotes({
               message: "Server is busy, please try again in a moment.",
             },
       );
+      track({ name: "notes_generation_failed", props: { format: fmt.id, reason: "aborted" } });
     } finally {
       clearTimeout(timeout);
       runningRef.current = false;
     }
-  }, [source, formatId, refreshQuota]);
+    // `docLoaded` joins the deps because the analytics `source` property reads it. It flips
+    // exactly when `docText` does, which already changes `source`, so this adds no extra
+    // invalidation — it just makes the dependency honest.
+  }, [source, formatId, refreshQuota, docLoaded]);
 
   /** Drop the document and hand the textarea back to the user. */
   const clearDoc = useCallback(() => {
@@ -297,6 +330,14 @@ export function QuickNotes({
     setDocText(null);
     setDoc({ kind: "uploading", name: file.name, percent: null });
 
+    /**
+     * The file's EXTENSION and SIZE, never `file.name`. Document names routinely carry a person's
+     * name, a course code or a client's ("Sarah_thesis_final_v3.pdf") — that is exactly the
+     * private metadata analytics must not accumulate (lib/analytics.ts).
+     */
+    const fileKind = fileKindOf(file.name);
+    track({ name: "document_upload_started", props: { fileKind, sizeBytes: file.size } });
+
     const body = await extractDocument(file, (phase) => {
       setDoc(
         phase.kind === "uploading"
@@ -306,18 +347,25 @@ export function QuickNotes({
     });
 
     if (typeof body.text === "string" && body.text.trim().length > 0) {
+      const extractedChars = body.charCount ?? body.text.length;
       setDocText(body.text);
       setDoc({
         kind: "ready",
         name: file.name,
-        chars: body.charCount ?? body.text.length,
+        chars: extractedChars,
       });
+      // A COUNT of characters, not the characters. This is the activation step that tells an
+      // upload apart from a parse that silently produced nothing.
+      track({ name: "document_parse_succeeded", props: { fileKind, extractedChars } });
       return;
     }
 
     // Every failure already carries its own next action (docs/04 §7) — the scanned-PDF message
     // points at pasting, the oversize one at a smaller file. Do not append another.
     setDoc({ kind: "error", message: body.message ?? EXTRACT_FAILED });
+    // Deliberately NOT `body.message`: it is user-facing prose that can name specifics about the
+    // file. `parse_failed` is enough to see the failure rate; Sentry has the detail.
+    track({ name: "document_parse_failed", props: { fileKind, reason: "extract_failed" } });
   }, []);
 
   const quota = quotaState(remaining, limit);
@@ -419,8 +467,16 @@ export function QuickNotes({
               chars={out.chars}
               showCopy={out.kind === "prose"}
               onCopy={() => void navigator.clipboard?.writeText(currentMarkdown())}
-              onPdf={() => exportPdf(`Edgify — ${out.label}`, currentMarkdown())}
-              onDoc={() => exportDoc(`Edgify — ${out.label}`, currentMarkdown())}
+              // The format id and the target travel; `currentMarkdown()` is the generated notes
+              // themselves and must never reach an event.
+              onPdf={() => {
+                track({ name: "notes_exported", props: { format: formatId, target: "pdf" } });
+                exportPdf(`Edgify — ${out.label}`, currentMarkdown());
+              }}
+              onDoc={() => {
+                track({ name: "notes_exported", props: { format: formatId, target: "word" } });
+                exportDoc(`Edgify — ${out.label}`, currentMarkdown());
+              }}
               onRegenerate={() => void generate()}
             />
             <div className="out-body">

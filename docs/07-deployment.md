@@ -38,6 +38,9 @@ missing or malformed value rather than fail mysteriously at request time.
 | `ADMIN_EMAILS` | *(empty — nobody)* | Comma-separated emails allowed to open `/admin/usage`. **Fails closed:** unset authorises nobody, including in dev. A session is authentication; this is authorisation, and that page shows every user's spend and identity rather than the caller's own |
 | `SENTRY_DSN` | *(unset)* | Empty string is treated as unset, so dev still boots |
 | `NEXT_PUBLIC_SENTRY_DSN` | *(unset)* | A DSN is a public ingestion key, not a secret — this prefix is deliberate and safe |
+| `SITE_URL` | `https://edgify.online` | **Public canonical origin** for `metadataBase`, canonical links, `robots.txt` and the sitemap. Deliberately NOT `BETTER_AUTH_URL`: static pages resolve metadata at BUILD time, where that variable is the Dockerfile's `localhost:3000` placeholder — which shipped `og:image="http://localhost:3000/…"` to production. The default is the real origin, so nothing needs setting; override only for a preview deployment |
+| `NEXT_PUBLIC_POSTHOG_KEY` | *(unset)* | PostHog **project** API key. Write-only and public by design, like the Sentry DSN. Unset ⇒ analytics is a no-op. `NEXT_PUBLIC_*` is inlined at BUILD time, so this must be a **Docker build arg**, not a Cloud Run env var (see below). The PostHog *personal* key can read data and must never appear here |
+| `NEXT_PUBLIC_POSTHOG_HOST` | `https://us.i.posthog.com` | Set to `https://eu.i.posthog.com` for an EU project. Must match the `connect-src` entry in `next.config.ts` |
 | `NODE_ENV` | `development` | Set `production` in the image |
 
 > **CORRECTED 2026-08-05, and the correction is the point.** This table had drifted from
