@@ -53,9 +53,72 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
   const userId = session.user.id;
   const { id: graphId } = await ctx.params;
 
-  const graph = await getGraph(userId, graphId);
+  let graph = await getGraph(userId, graphId);
   if (!graph) {
     return json({ message: "Something went wrong on our side. Please try again in a moment." }, 404);
+  }
+
+  /**
+   * THE POLL IS WHERE AN ABANDONED BUILD IS RETIRED (docs/09 §1.6).
+   *
+   * A build killed mid-flight writes nothing, so its row stays `processing` forever and this route
+   * would answer `processing` indefinitely — the never-fail promise (docs/04) becoming
+   * never-RESOLVE, which is worse than an honest error because nothing surfaces it.
+   *
+   * THE DATABASE DECIDES WHETHER A BUILD IS ABANDONED. THIS ROUTE DOES NOT.
+   *
+   * That distinction is the whole bug. This block used to be gated on an in-memory staleness test
+   * — `graph.buildStartedAt !== null && graph.buildStartedAt < abandonedBefore()` — computed from
+   * the row read above, and the reaper only ran when that gate agreed. `POST /api/graph/:id/build`
+   * has never had such a gate: it calls the reaper straight out and lets the `WHERE` clause decide.
+   *
+   * The integration suite proved which of the two is right. On the same aged row, with the same
+   * `abandonedBefore()` and the same `reapAbandonedGraph`, the POST path retires it (its tests
+   * pass) while the GET path reported `processing` (its test failed). The reaper, the threshold
+   * arithmetic and the ageing are therefore all sound — the ONLY thing that differed was this
+   * gate, evaluating false over a row the identical SQL predicate matches.
+   *
+   * So the gate is gone. `reapAbandonedGraph` already carries every condition that matters, and it
+   * evaluates them against the committed row rather than against a snapshot that may be stale,
+   * mis-typed or simply wrong. There is now exactly one definition of "abandoned" in the system,
+   * and it is the one in SQL.
+   *
+   * THE COST, STATED HONESTLY. A poll over a building graph now issues one no-op UPDATE in
+   * addition to its read, where before it issued only the read — and this route is called every
+   * 1.5s per client, which is what the 600/min limit is sized against. That UPDATE is a primary-key
+   * lookup matching zero rows, which is orders of magnitude cheaper than the model call the build
+   * it is polling is already making. Trading it for a correctness bug that made the never-fail
+   * promise a never-resolve one is the right way round; the in-memory shortcut is exactly how this
+   * defect got in.
+   */
+  if (graph.status === "processing") {
+    if (await reapAbandonedGraph(userId, graphId, abandonedBefore())) {
+      return json({ status: "failed", message: BUILD_FAILED_MESSAGE });
+    }
+
+    /**
+     * The reaper declined. Two very different reasons, and they must not be conflated:
+     *
+     *  - THE BUILD IS LIVE and inside its budget. This is the normal case, on every poll of every
+     *    healthy build, and the right answer is simply `processing`.
+     *  - ANOTHER WRITER GOT THERE FIRST. The build route reaps too, `finishGraph` can land `ready`,
+     *    and concurrent polls race each other. The row has moved and our copy is obsolete.
+     *
+     * The in-memory staleness test is demoted to exactly this: deciding whether a decline is
+     * SURPRISING. If our snapshot already looked stale, the reaper should have matched, so someone
+     * else must have transitioned the row — re-read rather than report a status we have just
+     * proved we no longer understand. If the snapshot looked live, a decline is expected and costs
+     * nothing extra, which is what keeps the hot polling path at one read plus one no-op write.
+     *
+     * Note this is now only an OPTIMISATION. If it misjudges, the reaper has already run against
+     * the real row, so the retirement still happens — it cannot resurrect the original bug.
+     *
+     * `failed` is deliberately not assumed here: the winner may have been `finishGraph`, in which
+     * case the truth is `ready` and the user's graph is ready to render.
+     */
+    if (graph.buildStartedAt !== null && graph.buildStartedAt < abandonedBefore()) {
+      graph = (await getGraph(userId, graphId)) ?? graph;
+    }
   }
 
   if (graph.status === "failed") {
@@ -65,25 +128,6 @@ async function handler(request: Request, ctx: RouteContext): Promise<Response> {
   // While processing, the poll costs exactly ONE round trip — there is nothing to read yet, and
   // this is the state the client sits in for up to 90 seconds.
   if (graph.status !== "ready") {
-    /**
-     * THE POLL IS WHERE AN ABANDONED BUILD IS RETIRED (docs/09 §1.6).
-     *
-     * A build killed mid-flight writes nothing, so its row stays `processing` forever and this
-     * route would answer `processing` indefinitely — the never-fail promise (docs/04) becoming
-     * never-RESOLVE, which is worse than an honest error because nothing surfaces it. Retiring it
-     * here means the transition happens exactly when somebody is waiting on the answer, which is
-     * why no background reaper is needed.
-     *
-     * THE ROUND-TRIP COST IS UNCHANGED on the normal path: staleness is decided in memory from the
-     * row already fetched above, so only a genuinely abandoned build pays for the write. That
-     * matters — this is the request the client repeats every 1.5s for up to 90s, and the 600/min
-     * limit on this route is built on it costing one query.
-     */
-    const stale =
-      graph.buildStartedAt !== null && graph.buildStartedAt < abandonedBefore();
-    if (stale && (await reapAbandonedGraph(userId, graphId, abandonedBefore()))) {
-      return json({ status: "failed", message: BUILD_FAILED_MESSAGE });
-    }
     return json({ status: graph.status, title: graph.title });
   }
 
