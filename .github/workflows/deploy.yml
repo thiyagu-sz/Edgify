@@ -67,11 +67,76 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SA }}
 
+      # Puts `gcloud` on PATH for the image build below. `deploy-cloudrun` runs its own gcloud
+      # internally and did not need this while the build was delegated to it.
+      - uses: google-github-actions/setup-gcloud@v2
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # ── Build the image HERE rather than delegating to `source: .` ───────────────────────
+      #
+      # WHY THIS STEP EXISTS. `NEXT_PUBLIC_*` values are inlined by Next into the CLIENT bundle at
+      # BUILD time, so they can only arrive as Docker build args — a Cloud Run env var reaches the
+      # server and never the browser. `deploy-cloudrun@v2` has NO input for build args (checked
+      # against its action.yml), and `source: .` hands the build to Cloud Build where nothing in
+      # this workflow can inject one. The result was silent: the image built, the deploy succeeded,
+      # and browser-side PostHog and Sentry were permanently inert in production — the failure mode
+      # that looks exactly like "no analytics events" and "no client errors".
+      #
+      # Building explicitly and deploying by digest is the smallest change that fixes it: every
+      # other deployment setting below is untouched, and `image:` is a documented input of the same
+      # action. The registry is the SAME `cloud-run-source-deploy` repository that `--source`
+      # deploys have been pushing to all along, so no new infrastructure is introduced.
+      #
+      # Ordered BEFORE migrations deliberately. A build failure now costs nothing; the previous
+      # order would have already migrated the database. The invariant that matters — migrations
+      # complete before a new revision exists — still holds, because pushing an image creates no
+      # revision.
+      - name: Build and push the image
+        id: image
+        env:
+          # Both are PUBLIC ingestion keys, not credentials: a Sentry DSN and a PostHog project
+          # key can only write events, never read them, and both are already visible in the client
+          # bundle by design (lib/env.ts). They are held as GitHub secrets to keep the literal
+          # values out of this file, which would otherwise trip the DSN arm of the AGENTS.md secret
+          # scan — not because disclosure would be a compromise.
+          #
+          # Unset is a supported configuration: the Dockerfile defaults both to empty and each SDK
+          # is a no-op without its key, so a missing secret degrades to "that half is off" rather
+          # than failing the deploy.
+          NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
+        run: |
+          set -euo pipefail   # no -x: never trace-print the build args
+
+          # The project is written literally rather than read from `steps.auth.outputs.project_id`,
+          # and that is a robustness choice. That output is only populated when the Workload
+          # Identity provider supplies a project; when it does not, it is EMPTY, and an empty
+          # substitution here yields `asia-south1-docker.pkg.dev//cloud-run-source-deploy/...` —
+          # a malformed reference whose push error names neither the cause nor the variable.
+          # The project is a fixed property of this deployment, so a literal cannot drift.
+          REGISTRY="asia-south1-docker.pkg.dev"
+          IMAGE="${REGISTRY}/innovationmate/cloud-run-source-deploy/edgify:${GITHUB_SHA}"
+
+          # The repository already exists — every previous `--source` deploy pushed to it — and
+          # edgify-deployer holds roles/artifactregistry.writer, so no create step is needed here.
+          # Deliberately NOT guarded with a `describe || create` fallback: creating a repository
+          # needs artifactregistry.repositories.create, which that account does NOT hold, so the
+          # fallback could only ever turn a clear "repository missing" error into a confusing
+          # "permission denied on create" one.
+          gcloud auth configure-docker "${REGISTRY}" --quiet
+
+          docker build \
+            --build-arg "NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}" \
+            --build-arg "NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}" \
+            --tag "${IMAGE}" .
+          docker push "${IMAGE}"
+
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
 
       # Explicit migration step, before the new revision exists. A failure here stops the deploy
       # and leaves the current revision serving — which is the point (docs/09 §3.5).
@@ -83,7 +148,9 @@ jobs:
       - uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: edgify
-          source: .
+          # Was `source: .`. The image is now built above so the NEXT_PUBLIC_* build args can be
+          # supplied; everything else about this deploy is unchanged.
+          image: ${{ steps.image.outputs.image }}
           region: asia-south1
           # Secrets come from Secret Manager, never --set-env-vars: plaintext in the service
           # config is visible to anyone with console read access (docs/07).
@@ -125,10 +192,11 @@ jobs:
             # production: lib/env.ts types SENTRY_DSN as optionalUrl, so the app booted happily
             # with no error reporting at all — the failure mode that looks exactly like "no errors".
             #
-            # NOTE: the BROWSER half (NEXT_PUBLIC_SENTRY_DSN) is deliberately NOT here. Next
+            # The BROWSER half (NEXT_PUBLIC_SENTRY_DSN) is still not here, and must not be: Next
             # inlines NEXT_PUBLIC_* at build time, so a runtime env var cannot reach the client
-            # bundle; it needs a Dockerfile build arg. Server-side capture is what the docs/09 §3.1
-            # failure-injection drills depend on, so that half is sequenced first.
+            # bundle. Setting it here would look configured and do nothing. It is supplied as a
+            # Docker build arg by the "Build and push the image" step above — the same reason that
+            # step exists at all.
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             # Without this the internal dashboard 404s for EVERYONE in production, including the
             # operator — lib/admin.ts fails closed on an empty allowlist, by design. Not in Secret
