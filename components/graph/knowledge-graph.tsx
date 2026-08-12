@@ -608,6 +608,48 @@ export function KnowledgeGraph({
  * the prototype's own unescaped `innerHTML` template of this same markup as a negative control,
  * and shows that one executing.
  */
+/**
+ * Horizontal breathing room inside a node box, each side. Matches the box's 11px corner radius,
+ * so the label clears the rounded corners rather than touching them.
+ */
+const LABEL_PAD_X = 10;
+
+/**
+ * Inter's mean glyph advance at weight 600, in em. Used to estimate a label's rendered width.
+ *
+ * `getComputedTextLength()` would be exact, but it needs a ref, a second render pass and a layout
+ * read for every node on every re-render of a 20-node graph — and it returns nothing during SSR.
+ * That is a great deal of machinery for a text-fitting problem, so the width is estimated instead.
+ * The constant is deliberately on the generous side: erring LONG re-introduces the overflow this
+ * exists to prevent, while erring short costs at most one elided character.
+ */
+const AVG_CHAR_EM = 0.55;
+
+/**
+ * The longest prefix of `name` that fits inside a node box, elided with an ellipsis if it must be.
+ *
+ * WHY THIS IS NEEDED. An SVG `<text>` neither wraps nor clips. With `text-anchor="middle"` a long
+ * label renders as a single line centred on the box and spills equally past BOTH edges, straight
+ * over the neighbouring nodes — which reads as boxes overlapping, even though every box is exactly
+ * where the layout put it (`lib/graph/layout.ts` keeps a 24px gap and never overlaps).
+ *
+ * The prototype has the same markup and never hit this: its demo concepts are "Calculus",
+ * "Gradient descent", "Neural networks". Real names come from the model, and `graphConceptSchema`
+ * puts NO maximum length on `name` — so the overflow is unbounded.
+ *
+ * The full, untruncated name is still available: it stays in the node's `aria-label` for assistive
+ * technology, in the `<title>` tooltip on hover, and in the concept panel on click. Nothing is
+ * lost — only the glyphs that would have been drawn on top of another node.
+ */
+export function fitNodeLabel(name: string, boxWidth: number, fontSize: number): string {
+  const available = boxWidth - LABEL_PAD_X * 2;
+  const maxChars = Math.floor(available / (fontSize * AVG_CHAR_EM));
+  if (name.length <= maxChars) return name;
+  // Below two characters there is no useful prefix to show, only the mark that something was cut.
+  if (maxChars < 2) return "…";
+  return `${name.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
 function DependencyGraph({
   concepts,
   edges,
@@ -683,13 +725,14 @@ function DependencyGraph({
           const x = concept.layoutX ?? 0;
           const y = concept.layoutY ?? 0;
           const fontSize = w < 118 ? 11 : 12.5;
+          const fullName = plainText(concept.name);
           return (
             <g
               key={concept.slug}
               className={`node-g n-${state}${isSelected ? " sel" : ""}`}
               tabIndex={0}
               role="button"
-              aria-label={plainText(concept.name)}
+              aria-label={fullName}
               onClick={() => onSelect(concept.slug)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -722,8 +765,11 @@ function DependencyGraph({
                 fontFamily="Inter, sans-serif"
                 letterSpacing="-0.2"
               >
-                {plainText(concept.name)}
+                {fitNodeLabel(fullName, w, fontSize)}
               </text>
+              {/* Recovers the full name on hover when the label above had to be elided. A React
+                  child, so it is escaped exactly as the label is (knowledge-graph.sanitize). */}
+              <title>{fullName}</title>
               {state === "learning" && (
                 <circle className="prq-dot" cx={x + w - 13} cy={y + 13} r={3.5} />
               )}
