@@ -122,23 +122,65 @@ async function handler(request: Request): Promise<Response> {
   // Live stream: forward tokens, accumulate for best-effort persistence on completion.
   const encoder = new TextEncoder();
   const tier = result.tier;
+  /**
+   * Set when the CLIENT GOES AWAY — a navigation, a closed tab, a back button, a dropped
+   * connection. Not an error: it is the single most ordinary way a generation ends early, and
+   * everything below distinguishes it from a genuine upstream failure.
+   */
+  let consumerGone = false;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let accumulated = "";
       try {
         for await (const chunk of result.textStream) {
+          // Stop pulling the model the moment nobody is listening. Without this the ladder keeps
+          // producing tokens — real spend — for output that can never be delivered. `break` also
+          // calls the generator's `return()`, so the upstream is closed rather than abandoned.
+          if (consumerGone) break;
           accumulated += chunk;
           controller.enqueue(encoder.encode(chunk));
         }
       } catch (err) {
-        // Tokens already sent; end the stream calmly. The client keeps what it has.
-        log.error("notes generate: mid-stream failure", err, { userId, format });
+        /**
+         * A cancelled consumer makes `enqueue` throw `ERR_INVALID_STATE` ("Invalid state:
+         * ReadableStream is already closed"). That is not a fault, and `log.error` is wired to
+         * Sentry — so reporting it turned every user who navigated away mid-generation into a
+         * production alert. A real upstream failure still lands here and is still reported.
+         */
+        if (!consumerGone) {
+          // Tokens already sent; end the stream calmly. The client keeps what it has.
+          log.error("notes generate: mid-stream failure", err, { userId, format });
+        }
       } finally {
-        controller.close();
+        /**
+         * `close()` THROWS when the consumer has already closed the stream, and this sits in a
+         * `finally` with nothing above it to catch — so the throw escaped `start()` and surfaced
+         * as an UNHANDLED REJECTION, taking the persistence below with it. On Node an unhandled
+         * rejection terminates the process by default, which makes an ordinary disconnect a
+         * potential way to end a Cloud Run instance.
+         */
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the consumer. Nothing to close, nothing to report.
+        }
       }
-      if (accumulated.trim().length > 0) {
+
+      /**
+       * Persist only a generation the client actually received in full. A cancelled stream leaves
+       * `accumulated` holding a fragment, and saving that would put truncated notes in the user's
+       * history. This was the behaviour before — but by accident, because the `close()` throw
+       * above skipped this line entirely. It is now deliberate.
+       */
+      if (!consumerGone && accumulated.trim().length > 0) {
         void persistNote(userId, format, accumulated);
       }
+    },
+
+    /** The consumer went away. Called by the platform on client disconnect. */
+    cancel() {
+      consumerGone = true;
     },
   });
 
