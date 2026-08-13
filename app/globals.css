@@ -987,3 +987,116 @@ svg.graph { display: block; width: 100%; height: auto; }
   #landing .lx-foot2-cols { grid-template-columns: 1fr; gap: 26px; }
   #landing .lx-foot2-bar { flex-direction: column; align-items: flex-start; }
 }
+
+/* ----------------------------------------------------------------------------
+   FEEDBACK (components/feedback/feedback-widget.tsx)
+
+   Every value below is an existing token — no new colour, radius, spacing step or family. The
+   trigger borrows the top bar's own control shape, the chips borrow `.format-chips`, and the
+   dialog borrows the light card treatment the workspace already uses. Scoped under `.fb-` so
+   nothing here can reach the landing page or the auth screens.
+   -------------------------------------------------------------------------- */
+
+.fb-trigger {
+  display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; margin-right: 8px;
+  font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--muted);
+  background: transparent; border: 1px solid var(--hairline); border-radius: var(--pill);
+  cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.fb-trigger:hover { color: var(--ink); border-color: var(--surface-strong); background: var(--surface-soft); }
+.fb-trigger svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+/* The post-generation ask. A bar pinned to the bottom, never a modal — it must not cover the
+   notes the user just generated, and it must not take focus. */
+.fb-prompt {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 40;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px;
+  background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-lg);
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+}
+.fb-prompt-q { font-size: 13.5px; font-weight: 500; color: var(--ink); }
+.fb-prompt-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fb-prompt-x {
+  width: 26px; height: 26px; border: none; background: transparent; cursor: pointer;
+  font-size: 18px; line-height: 1; color: var(--muted-soft); border-radius: var(--r-sm);
+}
+.fb-prompt-x:hover { color: var(--ink); background: var(--surface-soft); }
+
+.fb-overlay {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px;
+  background: rgba(17,17,17,.32);
+}
+.fb-dialog {
+  width: 100%; max-width: 480px; max-height: calc(100vh - 40px); overflow-y: auto;
+  background: var(--canvas); border-radius: var(--r-xl); padding: 22px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.28);
+}
+.fb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.fb-head h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--ink); }
+.fb-close {
+  width: 30px; height: 30px; border: none; background: transparent; cursor: pointer;
+  font-size: 20px; line-height: 1; color: var(--muted-soft); border-radius: var(--r-sm);
+}
+.fb-close:hover { color: var(--ink); background: var(--surface-soft); }
+
+.fb-form { display: grid; gap: 16px; }
+.fb-field { display: grid; gap: 8px; border: none; padding: 0; margin: 0; }
+.fb-field legend, .fb-field label {
+  font-size: 12px; font-weight: 500; color: var(--muted); padding: 0;
+}
+.fb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fb-chip {
+  padding: 6px 11px; font-family: var(--sans); font-size: 12.5px; color: var(--body);
+  background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--pill);
+  cursor: pointer; transition: border-color .12s, background .12s, color .12s;
+}
+.fb-chip:hover { border-color: var(--surface-strong); background: var(--surface-soft); }
+/* Selection is carried by aria-pressed, so the visual state cannot drift from the announced one. */
+.fb-chip[aria-pressed="true"] {
+  background: var(--primary); border-color: var(--primary); color: var(--on-primary);
+}
+
+.fb-textarea {
+  width: 100%; padding: 10px 12px; font-family: var(--sans); font-size: 14px; line-height: 1.55;
+  color: var(--ink); background: var(--canvas); border: 1px solid var(--hairline);
+  border-radius: var(--r-md); resize: vertical; min-height: 96px;
+}
+.fb-textarea::placeholder { color: var(--muted-soft); }
+.fb-textarea:focus { outline: none; box-shadow: 0 0 0 2px var(--ink); }
+.fb-textarea[aria-invalid="true"] { border-color: var(--error); }
+.fb-count { font-size: 11px; color: var(--muted-soft); text-align: right; }
+
+.fb-error {
+  font-size: 12.5px; line-height: 1.5; color: #b42318;
+  background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22);
+  border-radius: var(--r-md); padding: 9px 11px;
+}
+
+.fb-submit {
+  width: 100%; padding: 11px 16px; font-family: var(--sans); font-size: 14px; font-weight: 500;
+  color: var(--on-primary); background: var(--primary); border: none;
+  border-radius: var(--r-md); cursor: pointer; transition: background .12s;
+}
+.fb-submit:hover:not(:disabled) { background: var(--primary-active); }
+.fb-submit:disabled { background: var(--primary-disabled); color: var(--muted-soft); cursor: default; }
+
+.fb-sent { display: grid; gap: 8px; text-align: center; padding: 8px 0 4px; }
+.fb-sent .t { font-size: 15px; font-weight: 600; color: var(--ink); }
+.fb-sent .d { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+
+.fb-trigger:focus-visible, .fb-chip:focus-visible, .fb-submit:focus-visible,
+.fb-close:focus-visible, .fb-prompt-x:focus-visible, .fb-textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  /* The label would crowd the two-mode switcher; the icon still reads as feedback. */
+  .fb-trigger { padding: 7px 9px; gap: 0; font-size: 0; }
+  .fb-trigger svg { width: 17px; height: 17px; }
+  .fb-prompt { left: 16px; right: 16px; transform: none; max-width: none; }
+  .fb-dialog { padding: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-trigger, .fb-chip, .fb-submit { transition: none; }
+}

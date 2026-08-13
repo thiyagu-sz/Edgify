@@ -144,9 +144,27 @@ export default function LandingPage() {
             Edgify turns your notes, slides and PDFs into short, high-yield revision for the night before an exam — and a
             dependency graph that shows exactly what to learn first.
           </p>
+          {/*
+            The primary CTA points at SIGN-UP rather than the workspace.
+            "Launch workspace" reads as an instruction to someone who already has an account; a
+            first-time visitor has no workspace to launch, and following it only produced a
+            redirect to sign-in with no explanation of why. The account routes are the existing
+            Better Auth pages — no second authentication path is introduced.
+
+            THIS PAGE STAYS STATICALLY PRERENDERED, deliberately. Choosing the label from the
+            session would mean reading cookies here, which opts the whole marketing page out of
+            static rendering and adds a session database read to every anonymous visit — a real
+            cost on a scale-to-zero service, for a word. Signed-in visitors are not stranded: the
+            nav's "Launch app" still goes to /notes, and the (app) layout already routes them
+            correctly either way.
+          */}
           <div className="lx-hero-cta">
-            <Link href="/notes" className="lx-btn-primary">
-              Launch workspace
+            <Link href="/sign-up" className="lx-btn-primary">
+              Sign up
+              <ArrowIcon />
+            </Link>
+            <Link className="lx-btn-glass" href="/sign-in">
+              Sign in
               <ArrowIcon />
             </Link>
             <a className="lx-btn-glass" href="#lx-modes">
@@ -360,8 +378,13 @@ export default function LandingPage() {
             <h2>Start studying smarter</h2>
             <p>Two ways to learn, grounded in your own material. Jump straight into the workspace — no setup.</p>
             <div className="lx-hero-cta">
-              <Link href="/notes" className="lx-btn-primary">
-                Launch workspace
+              {/* Same reasoning as the hero: the closing CTA asks for an account. */}
+              <Link href="/sign-up" className="lx-btn-primary">
+                Sign up
+                <ArrowIcon />
+              </Link>
+              <Link className="lx-btn-glass" href="/sign-in">
+                Sign in
                 <ArrowIcon />
               </Link>
               <Link className="lx-btn-glass" href="/demo">

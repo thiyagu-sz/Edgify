@@ -5,6 +5,7 @@ import { FORMATS, getFormat } from "@/lib/ai/prompts";
 import { sanitizeQuiz, type Quiz } from "@/lib/ai/schemas";
 import { exportDoc, exportPdf, quizToMarkdown } from "@/lib/export";
 import { fileKindOf, track } from "@/lib/analytics";
+import { GENERATION_COMPLETE_EVENT } from "@/components/feedback/feedback-widget";
 import { quotaState } from "@/lib/notes/quota-display";
 import { renderMarkdown } from "@/lib/sanitize";
 
@@ -168,11 +169,19 @@ export function QuickNotes({
     const materialSource = docLoaded ? "upload" : "paste";
     const startedAt = Date.now();
     track({ name: "notes_generation_started", props: { format: fmt.id, source: materialSource } });
-    const completed = () =>
+    const completed = () => {
       track({
         name: "notes_generation_completed",
         props: { format: fmt.id, source: materialSource, durationMs: Date.now() - startedAt },
       });
+      /**
+       * Tells the feedback widget the user has now actually used the product, so its prompt can
+       * appear at the only moment it is worth asking. A DOM event rather than shared state or a
+       * prop drilled through the layout: this component and the widget live in different trees
+       * and neither should have to know the other exists.
+       */
+      window.dispatchEvent(new CustomEvent(GENERATION_COMPLETE_EVENT));
+    };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);

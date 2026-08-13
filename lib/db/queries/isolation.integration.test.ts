@@ -161,6 +161,11 @@ const WRITER_ALLOWLIST = [
   "ledger.recordLedger",
   "notes.createNote",
   "graphs.createGraph",
+  // Same shape as notes.createNote: inserts under the caller's userId, returns only the new id,
+  // and reads nothing. The module exports no reader at all, so there is no cross-user path to
+  // cover — a future admin `listFeedback` would read the whole tenancy and belongs in
+  // ADMIN_AGGREGATE_ALLOWLIST with its own gate test, not here.
+  "feedback.createFeedback",
 ];
 /**
  * Functions that read CONTENT-ADDRESSED rows across users by design — currently exactly one.

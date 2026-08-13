@@ -114,10 +114,49 @@ describe("the landing page matches the prototype", () => {
 });
 
 describe("the landing page's entry points", () => {
-  it("sends both launch actions to the workspace", () => {
+  /**
+   * UPDATED, not relaxed. This previously required all three launch actions to point at
+   * `/notes`, which encoded the old CTA: "Launch workspace" as the primary call to action.
+   *
+   * That reads as an instruction to someone who already has an account. A first-time visitor has
+   * no workspace to launch, and following it only produced a redirect to sign-in with no
+   * explanation. The hero and closing CTA now ask for an account instead; the NAV keeps "Launch
+   * app" → `/notes`, which is what still carries a signed-in visitor straight through.
+   *
+   * The assertions below are stricter than the one they replace: every account CTA is pinned to a
+   * specific existing Better Auth route, and the nav's behaviour is pinned separately rather than
+   * lumped in with the others.
+   */
+  it("asks an unauthenticated visitor to create an account", () => {
+    render(<LandingPage />);
+    const signUps = screen.getAllByRole("link", { name: /^sign up$/i });
+    expect(signUps.length, "hero and closing CTA").toBeGreaterThanOrEqual(2);
+    for (const link of signUps) expect(link.getAttribute("href")).toBe("/sign-up");
+  });
+
+  it("offers signing in alongside it, for visitors who already have an account", () => {
+    render(<LandingPage />);
+    const signIns = screen.getAllByRole("link", { name: /^sign in$/i });
+    expect(signIns.length).toBeGreaterThanOrEqual(1);
+    for (const link of signIns) expect(link.getAttribute("href")).toBe("/sign-in");
+  });
+
+  it("points every account CTA at the EXISTING auth routes, never a new one", () => {
+    // Guards against a second authentication path being introduced alongside Better Auth.
+    render(<LandingPage />);
+    const auth = [
+      ...screen.getAllByRole("link", { name: /^sign up$/i }),
+      ...screen.getAllByRole("link", { name: /^sign in$/i }),
+    ].map((l) => l.getAttribute("href"));
+    for (const href of auth) expect(["/sign-up", "/sign-in"]).toContain(href);
+  });
+
+  it("still sends the nav's launch action to the workspace", () => {
+    // The signed-in path. `/notes` is guarded by the (app) layout, which redirects anyone without
+    // a session — so this one link is correct for both audiences and must not change.
     render(<LandingPage />);
     const launches = screen.getAllByRole("link", { name: /launch (workspace|app)/i });
-    expect(launches.length).toBeGreaterThanOrEqual(3); // nav, hero, closing CTA
+    expect(launches.length).toBeGreaterThanOrEqual(1);
     for (const link of launches) expect(link.getAttribute("href")).toBe("/notes");
   });
 

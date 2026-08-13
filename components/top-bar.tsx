@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { FeedbackWidget } from "@/components/feedback/feedback-widget";
 import { UserMenu } from "@/components/user-menu";
 
 /**
@@ -53,8 +54,15 @@ export function TopBar({ userEmail }: { userEmail?: string }) {
       </div>
       <div className="nav-spacer" />
       {/* Optional so an unauthenticated surface renders no profile at all rather than a blank
-          one — only the (app) layout, which has already proven a session, passes an address. */}
-      {userEmail ? <UserMenu email={userEmail} /> : null}
+          one — only the (app) layout, which has already proven a session, passes an address.
+          Feedback rides the same signal: the endpoint requires a session, so offering it without
+          one would produce a form that can only fail. */}
+      {userEmail ? (
+        <>
+          <FeedbackWidget />
+          <UserMenu email={userEmail} />
+        </>
+      ) : null}
     </header>
   );
 }

@@ -10,6 +10,15 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check } from "drizzle-orm/pg-core";
+import {
+  FEEDBACK_RATINGS,
+  FEEDBACK_SOURCES,
+  FEEDBACK_STATUSES,
+  FEEDBACK_TYPES,
+  MAX_MESSAGE_LENGTH,
+} from "../feedback";
 import { user } from "./auth-schema";
 
 /**
@@ -227,5 +236,73 @@ export const usageLedger = pgTable(
       table.createdAt.desc(),
     ),
     index("usage_ledger_created_idx").on(table.createdAt.desc()),
+  ],
+);
+
+/**
+ * Quote a fixed vocabulary for a SQL `IN` list.
+ *
+ * Safe against injection by construction: the only callers pass module constants from
+ * `lib/feedback.ts`, never anything derived from a request. Deriving the constraint from that
+ * array rather than retyping the values is the point — a new feedback type added there and not
+ * here would otherwise be accepted by Zod and rejected by Postgres, which surfaces as a submit
+ * button that silently fails.
+ */
+const inList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
+
+/**
+ * User-submitted product feedback (bug reports, requests, sentiment).
+ *
+ * Deliberately NOT a general-purpose events table. It holds what a person chose to tell us and
+ * nothing derived about them: no email, no name, no IP, no user-agent. The author is the `userId`
+ * foreign key and nothing else, so a deleted account takes its feedback with it (`onDelete:
+ * cascade`) without a separate erasure step.
+ *
+ * `route` is our OWN pathname (`/notes`, `/graph`) — no query string, no identifiers — which is
+ * the difference between "something is broken" and "something is broken on the graph page". It is
+ * pattern-restricted at the API boundary so a client cannot use the column as free storage.
+ *
+ * CHECK constraints rather than trusting the application alone. Zod already rejects an unknown
+ * type at the route, so these are the second line: they hold for anything that reaches the table
+ * by another path (a future admin tool, a manual backfill, a migration script) and they document
+ * the vocabulary to anyone reading the database rather than the code.
+ */
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    /** Optional: a bug report does not need a sentiment attached to be useful. */
+    rating: text("rating"),
+    message: text("message").notNull(),
+    /** Triage lifecycle. Nothing reads it yet; it exists so the table is reviewable later. */
+    status: text("status").notNull().default("new"),
+    /** Which entry point produced this — the top-bar widget, or the post-generation prompt. */
+    source: text("source"),
+    route: text("route"),
+    createdAt: timestamptz("created_at").defaultNow().notNull(),
+    updatedAt: timestamptz("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    // The reader's own history, newest first — the only user-facing query shape.
+    index("feedback_user_created_idx").on(table.userId, table.createdAt.desc()),
+    // Triage: "what is new", newest first. The shape an admin view would use.
+    index("feedback_status_created_idx").on(table.status, table.createdAt.desc()),
+    index("feedback_type_idx").on(table.type),
+    check("feedback_type_valid", sql.raw(`type in (${inList(FEEDBACK_TYPES)})`)),
+    check("feedback_rating_valid", sql.raw(`rating is null or rating in (${inList(FEEDBACK_RATINGS)})`)),
+    check("feedback_status_valid", sql.raw(`status in (${inList(FEEDBACK_STATUSES)})`)),
+    check("feedback_source_valid", sql.raw(`source is null or source in (${inList(FEEDBACK_SOURCES)})`)),
+    // Bounds the write surface at the table, not only at the route.
+    check(
+      "feedback_message_length",
+      sql.raw(`char_length(message) between 1 and ${MAX_MESSAGE_LENGTH}`),
+    ),
   ],
 );
