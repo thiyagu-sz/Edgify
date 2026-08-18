@@ -47,10 +47,16 @@ export function SiteFooter({ brandMark }: { brandMark: React.ReactNode }) {
         <nav className="lx-foot2-col" aria-labelledby="foot-learn">
           <h2 id="foot-learn">Learn more</h2>
           <ul>
-            {/* In-page anchors on the landing page — these exist and are already in the nav. */}
-            <li><a href="#lx-features">Features</a></li>
-            <li><a href="#lx-modes">How it works</a></li>
-            <li><a href="#lx-start">Get started</a></li>
+            {/*
+              ROOT-RELATIVE, not bare fragments. These are sections OF THE LANDING PAGE. While the
+              footer rendered only there, `#lx-features` was correct; it now also renders on
+              /pdf-to-study-notes and /concept-map-for-studying, where a bare fragment names an
+              element that does not exist and the link silently scrolls nowhere. `/#lx-features`
+              works from every page and is unchanged in behaviour on the landing page itself.
+            */}
+            <li><Link href="/#lx-features">Features</Link></li>
+            <li><Link href="/#lx-modes">How it works</Link></li>
+            <li><Link href="/#lx-start">Get started</Link></li>
           </ul>
         </nav>
 

@@ -49,11 +49,20 @@ describe("no dead links", () => {
     const { container } = render(<SiteFooter brandMark={mark} />);
     const anchors = [...container.querySelectorAll("a")]
       .map((a) => a.getAttribute("href") ?? "")
-      .filter((h) => h.startsWith("#"));
+      .filter((h) => h.includes("#"));
 
     // These ids are rendered by app/(marketing)/page.tsx.
     const KNOWN = ["#lx-features", "#lx-modes", "#lx-start"];
-    for (const a of anchors) expect(KNOWN, `${a} is not a section on the landing page`).toContain(a);
+    expect(anchors.length, "no fragment links found — the test is not exercising anything").toBe(3);
+    for (const a of anchors) {
+      /**
+       * ROOT-RELATIVE IS REQUIRED, and the assertion is written to catch the regression rather
+       * than just the shape. The footer renders on the SEO landing pages too, where a bare
+       * `#lx-features` points at an element that does not exist on that page and scrolls nowhere.
+       */
+      expect(a.startsWith("/#"), `${a} must be root-relative so it works off the landing page`).toBe(true);
+      expect(KNOWN, `${a} is not a section on the landing page`).toContain(a.slice(1));
+    }
   });
 
   it("external links open safely", () => {

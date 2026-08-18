@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import robots from "./robots";
 import sitemap from "./sitemap";
@@ -62,15 +64,37 @@ describe("sitemap.xml", () => {
   it("lists exactly the public, indexable pages", () => {
     // The legal documents are deliberately included: `noindex` on a privacy policy hides the
     // page a cautious user goes looking for before trusting the product with their coursework.
+    // The two SEO landing pages are public server components with no session and no model call.
     const urls = sitemap().map((e) => e.url);
     expect(urls).toEqual([
       `${CANONICAL}/`,
       `${CANONICAL}/demo`,
+      `${CANONICAL}/pdf-to-study-notes`,
+      `${CANONICAL}/concept-map-for-studying`,
       `${CANONICAL}/privacy`,
       `${CANONICAL}/terms`,
       `${CANONICAL}/cookies`,
       `${CANONICAL}/ai-disclaimer`,
     ]);
+  });
+
+  it("submits only URLs that correspond to a page on disk", () => {
+    /**
+     * A sitemap entry for a route that does not exist is a 404 submitted to Google. The route
+     * group `(marketing)` does not appear in the URL, so the mapping is checked rather than
+     * assumed — this is the assertion that would have caught a typo in either new path.
+     */
+    const candidates = (path: string) => [
+      join("app", "(marketing)", path, "page.tsx"),
+      join("app", "(legal)", path, "page.tsx"),
+      join("app", path, "page.tsx"),
+    ];
+    for (const { url } of sitemap()) {
+      const path = new URL(url).pathname.replace(/^\/|\/$/g, "");
+      if (path === "") continue; // `/` is the (marketing) index, asserted by landing.test.tsx
+      const found = candidates(path).some((p) => existsSync(join(process.cwd(), p)));
+      expect(found, `${url} has no page.tsx on disk`).toBe(true);
+    }
   });
 
   it("contains no private, authenticated or API route", () => {

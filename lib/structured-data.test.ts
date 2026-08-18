@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { landingJsonLd, serialiseJsonLd } from "./structured-data";
+import { breadcrumbJsonLd, landingJsonLd, serialiseJsonLd } from "./structured-data";
 
 /**
  * Structured data is a machine-readable claim made directly to Google, so the tests that matter
@@ -55,6 +55,48 @@ describe("the entities are well formed", () => {
 
   it("declares no SearchAction, because there is no site search endpoint", () => {
     expect(serialised).not.toMatch(/SearchAction|potentialAction/i);
+  });
+});
+
+describe("the SEO landing pages state a breadcrumb and nothing else", () => {
+  const crumb = breadcrumbJsonLd(SITE, "PDF to Study Notes", "/pdf-to-study-notes");
+  const crumbJson = serialiseJsonLd(crumb);
+
+  it("is a BreadcrumbList", () => {
+    expect(crumb["@type"]).toBe("BreadcrumbList");
+  });
+
+  it("does not repeat the organisation, website or application entity", () => {
+    // These are stated once, on `/`. Re-declaring the same entity per page gives Google several
+    // copies of one thing to reconcile, which is the reason this helper is deliberately small.
+    expect(crumbJson).not.toMatch(/Organization|WebSite|SoftwareApplication/);
+  });
+
+  it("does not self-link the final crumb", () => {
+    // A last ListItem carrying its own `item` is the most common way this markup is rejected.
+    const items = crumb.itemListElement as Array<Record<string, unknown>>;
+    expect(items).toHaveLength(2);
+    expect(items[1]).not.toHaveProperty("item");
+    expect(items[1].name).toBe("PDF to Study Notes");
+  });
+
+  it("points the first crumb at the canonical home page", () => {
+    const items = crumb.itemListElement as Array<Record<string, unknown>>;
+    expect(items[0].item).toBe(`${SITE}/`);
+  });
+
+  it("normalises a trailing slash on the site URL", () => {
+    const items = (breadcrumbJsonLd(`${SITE}/`, "X", "/x").itemListElement as Array<
+      Record<string, unknown>
+    >)[0];
+    expect(items.item).toBe(`${SITE}/`);
+  });
+
+  it("uses the canonical origin for every URL it states", () => {
+    for (const url of crumbJson.match(/https?:\/\/[^"]+/g) ?? []) {
+      if (url.startsWith("https://schema.org")) continue;
+      expect(url.startsWith(SITE), `${url} is not on the canonical origin`).toBe(true);
+    }
   });
 });
 

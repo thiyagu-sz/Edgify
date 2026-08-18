@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ArrowIcon, BrandMark, CheckIcon } from "@/components/brand-mark";
 import { SiteFooter } from "@/components/site-footer";
 import { env } from "@/lib/env";
 import { OG_IMAGES, TWITTER_IMAGES } from "@/lib/seo";
@@ -52,35 +53,6 @@ export const metadata: Metadata = {
     images: TWITTER_IMAGES,
   },
 };
-
-function BrandMark({ accentThirdNode = true }: { accentThirdNode?: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <line x1="12" y1="5.5" x2="5.5" y2="17.5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-      <line x1="12" y1="5.5" x2="18.5" y2="17.5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-      <line x1="5.5" y1="17.5" x2="18.5" y2="17.5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="12" cy="5.5" r="2.7" fill="#fff" />
-      <circle cx="5.5" cy="17.5" r="2.7" fill="#fff" />
-      <circle cx="18.5" cy="17.5" r="2.7" fill={accentThirdNode ? "#60a5fa" : "#fff"} />
-    </svg>
-  );
-}
-
-function ArrowIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none">
-      <path d="M4 12h16m0 0l-6-6m6 6l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none">
-      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 function DownloadIcon() {
   return (
@@ -256,12 +228,14 @@ export default function LandingPage() {
             <div className="lx-mini-pills">
               <span className="lx-mini-pill">Key points</span>
               <span className="lx-mini-pill">Exam points</span>
-              <span className="lx-mini-pill">MCQs</span>
+              <span className="lx-mini-pill">Main concepts</span>
               <span className="lx-mini-pill">Summary</span>
               <span className="lx-mini-pill">Formulas</span>
-              <span className="lx-mini-pill">Quick test</span>
+              <span className="lx-mini-pill">Short notes</span>
             </div>
-            <h3>Nine ways to revise</h3>
+            {/* EIGHT. `lib/ai/prompts.ts` defines exactly eight formats; "nine" was a draft
+                miscount, already corrected in docs/06 and in lib/structured-data.ts. */}
+            <h3>Eight ways to revise</h3>
           </div>
 
           <div className="lx-card col-4 gborder" style={{ animationDelay: ".6s" }}>
@@ -309,7 +283,15 @@ export default function LandingPage() {
               </p>
               <ul>
                 <li>
-                  <CheckIcon /> Nine revision formats, including MCQs and a graded quick test
+                  {/*
+                    Names the six MARKDOWN formats and no longer advertises MCQs or the graded
+                    quick test. Both are implemented, but the provider currently rejects them —
+                    strict `response_format` requires every property to be listed as required and
+                    the quiz schema's `explanation` is optional — so the landing page stopped
+                    promising a path that fails. Restore the quiz copy when that is fixed.
+                  */}
+                  <CheckIcon /> Key points, main concepts, exam points, short notes, formulas and
+                  summaries
                 </li>
                 <li>
                   <CheckIcon /> Upload PDF, DOCX, TXT or Markdown

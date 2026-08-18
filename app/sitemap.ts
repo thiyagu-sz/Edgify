@@ -10,9 +10,11 @@ import { LEGAL_PAGES } from "@/lib/legal";
  * `noindex` produces "Submitted URL has crawl issue" / "Submitted URL marked noindex" in Search
  * Console — noise that buries the real problems on the one report checked after launch.
  *
- * That leaves six URLs, and the small number is correct rather than an omission:
+ * That leaves eight URLs, and the small number is correct rather than an omission:
  *  - `/`          the landing page.
  *  - `/demo`      the signed-out workspace. Real, substantial, static public content.
+ *  - two SEO landing pages, each answering one search intent with content that exists nowhere
+ *    else on the site. They are static server components with no session and no model call.
  *  - the four legal documents, which are public by design.
  *
  * Deliberately absent: `/notes` and `/graph` (redirect to sign-in for a crawler), `/admin/usage`
@@ -40,6 +42,24 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified,
       changeFrequency: "monthly",
       priority: 0.8,
+    },
+    /**
+     * The SEO landing pages. Each targets one search intent — "PDF to study notes" and "concept
+     * map for studying" — and describes a feature the product actually has. `monthly` because
+     * they change when the feature does; `0.7` puts them below the demo, which is the stronger
+     * conversion surface, and well above the legal pages.
+     */
+    {
+      url: `${env.SITE_URL}/pdf-to-study-notes`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.7,
+    },
+    {
+      url: `${env.SITE_URL}/concept-map-for-studying`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.7,
     },
     /**
      * The legal documents. Public, indexable and genuinely useful to a person deciding whether
