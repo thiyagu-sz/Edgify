@@ -115,17 +115,52 @@ export type RunStreamArgs = {
   /** Aborts the model call when the client disconnects. */
   signal?: AbortSignal;
 };
+/**
+ * The diagnosis of a stream that terminated having produced no token.
+ *
+ * THE TWO STATES ARE BYTE-IDENTICAL ON THE DATA CHANNEL. Both are a clean, zero-length close, so
+ * no reader of `textStream` can tell them apart — separating them is the entire job of this type:
+ *
+ *  - `transport-fault` — the adapter reconstructed a failure that the data channel never carried.
+ *    The ladder re-raises it so `classify` can read the recovered status (docs/04 §1); a 401, 402
+ *    or 400 then costs this source exactly one attempt instead of its whole retry budget.
+ *  - `no-output` — the source genuinely produced nothing and no fault was reported anywhere. A
+ *    retryable tier failure, exactly like an empty buffered result (docs/04 §3).
+ */
+export type ZeroOutputVerdict =
+  | { kind: "transport-fault"; fault: unknown }
+  | { kind: "no-output" };
+
 export type RunStreamResult = {
-  /** Progressive token stream. Iterating rejects (or ends empty) on a model failure. */
+  /**
+   * Progressive token stream. Carries DATA ONLY — a terminal fault is never encoded here, because
+   * on the fault class this seam exists for there is nothing to encode: the stream closes cleanly.
+   */
   textStream: AsyncIterable<string>;
   /** Resolves once the stream completes. Await only after draining `textStream`. */
   usage: Promise<{ tokensIn: number; tokensOut: number }>;
+  /**
+   * REQUIRED CAPABILITY — the half of the admission barrier that the transport must supply.
+   *
+   * Called by `admitFirstToken` at, and only at, the instant the stream terminates having admitted
+   * no token. The adapter answers with what it reconstructed from its own out-of-band channels;
+   * it does not expose those channels, and the ladder does not know they exist.
+   *
+   * This is a required field rather than an optional one on purpose. An implementation that cannot
+   * discriminate is not a weaker streaming source, it is an UNSAFE one — it silently returns the
+   * pre-2026-07-30 behaviour in which a bad key burns all seven ladder attempts with no operator
+   * alert. Making the capability part of the contract means that regression cannot be reintroduced
+   * by writing a new adapter and forgetting; it is a compile error, pinned by
+   * `admission-barrier.test.ts` case A.
+   */
+  diagnoseZeroOutput: () => ZeroOutputVerdict;
 };
 
 /**
- * The streaming counterpart to `RunModel`. Returns synchronously with a live `textStream`; the
- * ladder in generate.ts drives it (pulls the first token to detect a tier failure before
- * committing). Tests inject a fake that yields chunks or throws to force each tier.
+ * The streaming counterpart to `RunModel`. Returns synchronously with a live `textStream` plus the
+ * zero-output diagnosis the admission barrier needs; the ladder in generate.ts drives both through
+ * `admitFirstToken`. Tests inject a fake that yields chunks, throws, or closes empty with or
+ * without a reconstructed fault, to force each tier.
  */
 export type RunStream = (args: RunStreamArgs) => RunStreamResult;
 
@@ -171,34 +206,47 @@ export const realRunStream: RunStream = ({ modelId, system, prompt, signal }) =>
   usage.catch(() => {});
 
   /**
-   * Surface the transport error to the ladder.
+   * The data channel, and nothing else.
    *
-   * The failure mode here is counter-intuitive and was found by pointing the app at an invalid
-   * key and watching what actually happened. On a 401 the SDK does NOT throw from `textStream`:
-   * the stream yields zero chunks and closes cleanly, `totalUsage` rejects with a generic
-   * `AI_NoOutputGeneratedError` that carries no status, and the `APICallError` with
-   * `statusCode: 401` reaches `onError` alone.
+   * The only fault handling left here is preferring the CAPTURED error when iteration itself
+   * throws: the error the iterator raises is a generic wrapper carrying no status, while the one
+   * `onError` received is the `APICallError` the ladder classifies by (docs/04 §1).
    *
-   * So the ladder saw an empty stream, treated it as a retryable empty result, and burned all 7
-   * attempts on a key that could never work — with no operator alert, when docs/04 §1 says a 401
-   * is non-retryable and must be alerted on. Re-raising the captured error when the stream
-   * produced nothing turns that back into one attempt per model and a logged alert.
-   *
-   * An empty stream with NO captured error is different: that is a model returning nothing,
-   * which is a genuine (retryable) tier failure, so it is left to the ladder's EmptyStreamError.
+   * A zero-length close is deliberately NOT turned into a throw. That used to happen here, and it
+   * meant the fault travelled to the ladder disguised as data-path behaviour — the barrier's own
+   * `next()` rejecting. The diagnosis now leaves through `diagnoseZeroOutput` instead, which is a
+   * typed answer to a question the barrier asks, so the data channel carries data and the fault
+   * channel carries faults.
    */
-  async function* withTransportError(): AsyncGenerator<string> {
-    let produced = false;
+  async function* dataChannel(): AsyncGenerator<string> {
     try {
-      for await (const chunk of result.textStream) {
-        produced = true;
-        yield chunk;
-      }
+      for await (const chunk of result.textStream) yield chunk;
     } catch (err) {
       throw transportError ?? err;
     }
-    if (!produced && transportError !== undefined) throw transportError;
   }
 
-  return { textStream: withTransportError(), usage };
+  return {
+    textStream: dataChannel(),
+    usage,
+    /**
+     * The reconstruction, answered on demand.
+     *
+     * The failure mode this exists for is counter-intuitive and was found by pointing the app at
+     * an invalid key and watching what actually happened. On a 401 the SDK does NOT throw from
+     * `textStream`: the stream yields zero chunks and closes cleanly, `totalUsage` rejects with a
+     * generic `AI_NoOutputGeneratedError` carrying no status, and the `APICallError` with
+     * `statusCode: 401` reaches `onError` alone.
+     *
+     * So the ladder saw an empty stream, treated it as a retryable empty result, and burned all 7
+     * attempts on a key that could never work — with no operator alert, when docs/04 §1 says a 401
+     * is non-retryable and must be alerted on.
+     *
+     * `transportError` never leaves this closure. What leaves is the verdict.
+     */
+    diagnoseZeroOutput: () =>
+      transportError !== undefined
+        ? { kind: "transport-fault", fault: transportError }
+        : { kind: "no-output" },
+  };
 };

@@ -62,6 +62,8 @@ const deps = {
       yield "streamed";
     })(),
     usage: Promise.resolve({ tokensIn: 1, tokensOut: 2 }),
+    // This double always produces, so the barrier never asks; answered truthfully regardless.
+    diagnoseZeroOutput: () => ({ kind: "no-output" as const }),
   }),
   runModel: async () => ({ data: "generated", tokensIn: 1, tokensOut: 2 }),
   demoFor: () => "# demo",

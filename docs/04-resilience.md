@@ -84,6 +84,57 @@ daily quota, so aggressive retrying drains the allowance faster than successful 
 
 ---
 
+## 1.1 Streaming commitment: the first-token admission barrier
+
+The table above assumes the failure is visible where the request was issued. On the streaming
+path that assumption does not hold, and the ladder above is not sufficient on its own.
+
+**The discovered fact.** On a 401 the provider SDK does not throw from `textStream`. The stream
+yields zero chunks and closes *cleanly*; `totalUsage` rejects with a generic error carrying no
+status; and the `APICallError` with the status on it reaches the `onError` callback and nowhere
+else. So the naive reading of the transport — "the stream ended without content, that is an empty
+result, empty results are retryable" — inverts the retry policy exactly where retrying can never
+succeed. A successfully-closed, zero-length stream is the signature of a **non-retryable
+configuration fault**, not of a transient empty generation.
+
+Two rules follow, and they are load-bearing only in combination.
+
+**Rule 1 — commit on positive evidence, never on stream open.** A streaming source is not
+committed because the stream opened. The control layer draws from the transport until it holds a
+token of **non-zero length**, and withholds that token. Only then is the source committed. The
+withheld token is re-emitted at the head of the same generation, so the client's progressive
+experience is identical to immediate relay — nothing is buffered beyond the first token.
+
+`admitFirstToken` in `lib/ai/generate.ts` is the only way to consume the head of a stream.
+
+**Rule 2 — a zero-output close must be diagnosed, not assumed.** Every streaming adapter must
+answer `diagnoseZeroOutput()`, a **required** member of `RunStreamResult` in `lib/ai/models.ts`.
+It is called at, and only at, the instant a stream terminates having admitted no token:
+
+| Tokens admitted | Verdict | Diagnosis | Action |
+|---|---|---|---|
+| 0 | `transport-fault` | Terminal fault recovered from the async channel | Re-raise so `classify` reads the status; **do not retry this source**; alert; advance |
+| 0 | `no-output` | Transient empty generation | Retryable tier failure, within this source's attempt bound |
+| ≥ 1 | — | Source has demonstrated production | Commit; re-emit the withheld token; stream on |
+
+**Why the two rules need each other.** Rule 1 creates the decision state — "no output yet" versus
+"positive production evidence" — that Rule 2 keys on; without the barrier, relay has already begun
+and there is no pre-commit moment in which any diagnosis could be acted upon. Rule 2 makes Rule 1's
+own exit condition usable; without the diagnosis, "terminated having produced nothing" is exactly
+the state a terminal fault forges, so the barrier would hand a guaranteed-futile attempt back for
+retry. Removing either one is a real regression, and both directions are pinned by mutation tests
+in `lib/ai/admission-barrier.test.ts`.
+
+**The capability is required, not optional.** An adapter that cannot discriminate is not a weaker
+streaming source, it is an unsafe one: it silently restores the behaviour in which a bad key burns
+the entire ladder budget with no operator alert. Omitting `diagnoseZeroOutput` is a compile error.
+
+**The data channel carries data only.** The reconstructed fault is never encoded into
+`textStream`; it leaves the adapter as a typed verdict. The adapter's captured error never escapes
+its closure.
+
+---
+
 ## 2. Demo mode
 
 Demo mode is the reason this system does not have a hard failure state. It exists for three

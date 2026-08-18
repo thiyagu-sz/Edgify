@@ -58,6 +58,23 @@ only failure state, and it is calm.
 - Failed requests count against the free daily quota, so eager retrying costs more
   than it recovers
 
+## Streaming: commit on evidence, diagnose zero output
+
+- A streaming source is committed only once a **non-zero-length token** is in hand.
+  `admitFirstToken` (`lib/ai/generate.ts`) is the only way to consume a stream's head;
+  it withholds that token and `commitStream` re-emits it. Never relay on stream open.
+- Every `RunStream` implementation MUST provide `diagnoseZeroOutput()`. It is a
+  required member of `RunStreamResult`, not an optional one — omitting it is a
+  compile error.
+- A clean zero-length close is **ambiguous** and must be diagnosed, never assumed:
+  `transport-fault` → do not retry this source, advance; `no-output` → bounded retry.
+  On a 401 the SDK closes the stream cleanly and reports only via `onError`, so the
+  naive reading retries a key that can never work.
+- The reconstructed fault leaves the adapter as a typed verdict. Do not encode it into
+  `textStream`, and do not expose the adapter's captured error.
+
+Full specification: `docs/04-resilience.md` §1.1.
+
 ## Validate every model output
 
 - Prefer `generateObject` with a Zod schema over parsing text

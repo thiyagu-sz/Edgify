@@ -31,7 +31,13 @@ function apiError(statusCode: number): APICallError {
   });
 }
 
-/** Build a fake streamer: per model id, either stream `chunks` or throw at startup. */
+/**
+ * Build a fake streamer: per model id, either stream `chunks` or throw at startup.
+ *
+ * These doubles model a transport with NO out-of-band channel — they fail by throwing on the data
+ * path — so `diagnoseZeroOutput` truthfully answers `no-output`. The out-of-band fault class has
+ * its own suite (`admission-barrier.test.ts`), which drives the real adapter.
+ */
 function streamRunner(
   fn: (modelId: string) => { chunks?: string[]; throwErr?: unknown },
 ) {
@@ -43,7 +49,11 @@ function streamRunner(
       if (spec.throwErr) throw spec.throwErr;
       for (const c of spec.chunks ?? []) yield c;
     }
-    return { textStream: gen(), usage: Promise.resolve({ tokensIn: 5, tokensOut: 9 }) };
+    return {
+      textStream: gen(),
+      usage: Promise.resolve({ tokensIn: 5, tokensOut: 9 }),
+      diagnoseZeroOutput: () => ({ kind: "no-output" }),
+    };
   };
   return { runStream, calls };
 }

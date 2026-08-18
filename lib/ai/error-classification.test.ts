@@ -35,8 +35,13 @@ function apiError(statusCode: number): APICallError {
 }
 
 /**
- * A streamer that fails the way the REAL SDK fails: the iterator throws the transport error, and
- * `usage` rejects with it too. Records how many times it was called.
+ * A streamer that fails the way the REAL SDK fails when the failure IS visible on the data path:
+ * the iterator throws the transport error, and `usage` rejects with it too. Records how many times
+ * it was called.
+ *
+ * The zero-output verdict is `no-output` because this double never reaches it — it throws before
+ * the stream can close. The invisible-fault class, where the verdict is the only signal, is
+ * covered by `admission-barrier.test.ts` against the real adapter.
  */
 function failingStreamer(error: unknown) {
   const calls: string[] = [];
@@ -48,7 +53,7 @@ function failingStreamer(error: unknown) {
     const usage = Promise.reject(error) as Promise<{ tokensIn: number; tokensOut: number }>;
     // The production seam attaches this; mirror it so the test does not itself leak a rejection.
     usage.catch(() => {});
-    return { textStream: gen(), usage };
+    return { textStream: gen(), usage, diagnoseZeroOutput: () => ({ kind: "no-output" }) };
   };
   return { runStream, calls };
 }
@@ -151,11 +156,17 @@ describe("wrapped transport errors are still classified", () => {
  *   - `totalUsage` rejects with a generic AI_NoOutputGeneratedError carrying no status.
  *   - The APICallError with `statusCode: 401` reaches `onError` and nowhere else.
  *
- * So an empty stream must be re-raised as the captured transport error, or the ladder reads a
- * config failure as an empty result and retries it.
+ * So an empty stream must carry the captured transport error out to the admission barrier, or the
+ * ladder reads a config failure as an empty result and retries it.
+ *
+ * The route that fault takes changed on 2026-08-15. It used to be re-raised INTO the data channel
+ * — iterating `textStream` threw — which worked but meant the barrier learned the diagnosis by
+ * being ambushed on the path that is supposed to carry data. It is now returned as a typed verdict
+ * from `diagnoseZeroOutput()`, a required member of `RunStreamResult`. The behaviour these tests
+ * pin is unchanged; what they assert against is the contract rather than a side effect.
  */
-describe("realRunStream — an empty stream caused by a transport error is re-raised", () => {
-  it("throws the captured error instead of completing silently", async () => {
+describe("realRunStream — an empty stream caused by a transport error is reconstructed", () => {
+  it("reports the captured error as a transport-fault verdict, not as an empty stream", async () => {
     vi.resetModules();
     const failure = apiError(401);
 
@@ -178,16 +189,23 @@ describe("realRunStream — an empty stream caused by a transport error is re-ra
     }));
 
     const { realRunStream } = await import("./models");
-    const { textStream } = realRunStream({ modelId: "m", system: "s", prompt: "p" });
+    const { textStream, diagnoseZeroOutput } = realRunStream({
+      modelId: "m",
+      system: "s",
+      prompt: "p",
+    });
 
-    let thrown: unknown;
-    try {
-      for await (const chunk of textStream) void chunk;
-    } catch (err) {
-      thrown = err;
-    }
+    // The data channel is clean and empty — exactly as the real SDK leaves it. That is the
+    // premise, not the finding: nothing here is distinguishable from a model returning nothing.
+    const chunks: string[] = [];
+    for await (const chunk of textStream) chunks.push(chunk);
+    expect(chunks).toEqual([]);
 
-    expect(thrown, "an empty stream hid the transport error").toBe(failure);
+    // The finding: the fault survived, on the other channel, and is available to the barrier.
+    expect(diagnoseZeroOutput(), "an empty stream hid the transport error").toEqual({
+      kind: "transport-fault",
+      fault: failure,
+    });
     vi.doUnmock("ai");
     vi.doUnmock("@openrouter/ai-sdk-provider");
     vi.resetModules();
@@ -210,13 +228,19 @@ describe("realRunStream — an empty stream caused by a transport error is re-ra
     }));
 
     const { realRunStream } = await import("./models");
-    const { textStream } = realRunStream({ modelId: "m", system: "s", prompt: "p" });
+    const { textStream, diagnoseZeroOutput } = realRunStream({
+      modelId: "m",
+      system: "s",
+      prompt: "p",
+    });
 
     const chunks: string[] = [];
     for await (const chunk of textStream) chunks.push(chunk);
-    // A model that returns nothing is a retryable tier failure, handled by the ladder — not a
-    // config error, so nothing should be re-raised here.
     expect(chunks).toEqual([]);
+    // Byte-for-byte the same data channel as the test above. A model that returns nothing is a
+    // retryable tier failure, handled by the ladder — not a config error — so the verdict must
+    // say so rather than inventing a fault.
+    expect(diagnoseZeroOutput()).toEqual({ kind: "no-output" });
 
     vi.doUnmock("ai");
     vi.doUnmock("@openrouter/ai-sdk-provider");

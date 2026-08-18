@@ -14,6 +14,8 @@ import {
   type RunModelArgs,
   type RunModelResult,
   type RunStream,
+  type RunStreamResult,
+  type ZeroOutputVerdict,
 } from "./models";
 import { costMicrosFor } from "./pricing";
 import {
@@ -589,23 +591,38 @@ export async function generateNotesStream(
     let retried = false;
     for (let attempt = 0; attempt < step.maxAttempts; attempt++) {
       try {
-        const { textStream, usage } = runStream({
+        const source = runStream({
           modelId: step.modelId,
           system,
           prompt,
           signal: opts.signal,
         });
-        const iterator = textStream[Symbol.asyncIterator]();
 
-        // Pull the first non-empty token. A startup error rejects here → next tier; a stream
-        // that yields nothing is an empty result (a failure, docs/04 §3) → next tier.
-        let firstChunk = "";
-        for (;;) {
-          const next = await iterator.next();
-          if (next.done) throw new EmptyStreamError();
-          if (next.value.length > 0) {
-            firstChunk = next.value;
+        /**
+         * THE ADMISSION BARRIER. Nothing is committed until this returns, and it cannot return a
+         * zero-output result without the transport's own diagnosis of that zero output.
+         */
+        const admission = await admitFirstToken(source);
+
+        switch (admission.kind) {
+          case "transport-fault":
+            /**
+             * Zero tokens, and the adapter reconstructed a fault behind them. Re-raise into the
+             * ladder so `classify` reads the RECOVERED status rather than an absence of one: a
+             * 401/402/400 stops this source after a single attempt (docs/04 §1) instead of
+             * spending its whole retry budget on a condition that cannot clear.
+             */
+            throw admission.fault;
+          case "no-output":
+            // Zero tokens and nothing reported anywhere — a genuine empty generation, retryable
+            // within this source's attempt budget exactly like an empty buffered result.
+            throw new EmptyStreamError();
+          case "producing":
             break;
+          default: {
+            // Exhaustiveness: a future verdict cannot be silently folded into the retryable path.
+            const unreachable: never = admission;
+            throw unreachable;
           }
         }
 
@@ -617,9 +634,9 @@ export async function generateNotesStream(
           modelId: step.modelId,
           tier: step.tier,
           outcome,
-          firstChunk,
-          iterator,
-          usage,
+          firstChunk: admission.firstToken,
+          iterator: admission.rest,
+          usage: source.usage,
           elapsed,
         });
         return { kind: "stream", tier: step.tier, textStream: textStreamOut };
@@ -643,6 +660,47 @@ export async function generateNotesStream(
   // ── Tier 5/6: demo, else busy ───────────────────────────────────────────────
   const demoResult = await serveDemo(input, "demo", demoFor, elapsed);
   return { kind: "final", data: demoResult.data, tier: demoResult.tier, notice: demoResult.notice };
+}
+
+/**
+ * What the admission barrier decided about one streaming attempt.
+ *
+ * The two zero-output variants are the reason this is a union rather than a token-or-null. They
+ * are INDISTINGUISHABLE on the data channel — both are a clean, zero-length close — so a barrier
+ * that returned "no first token" would have destroyed the only difference that matters before the
+ * ladder ever saw it. Carrying the transport's verdict through means the recovery layer chooses
+ * between "retry this source" and "abandon this source" on evidence rather than on a guess.
+ */
+type Admission =
+  | { kind: "producing"; firstToken: string; rest: AsyncIterator<string> }
+  | ZeroOutputVerdict;
+
+/**
+ * THE ADMISSION BARRIER (docs/04 §3) — the single, and only, way to consume the head of a
+ * `RunStreamResult`.
+ *
+ * Draws from the transport until it holds a token of non-zero length, and withholds that token so
+ * the caller commits only on possession of it. `commitStream` re-emits it at the head of the same
+ * generation, so the client's progressive experience is identical to immediate relay.
+ *
+ * The coupling to element B is structural, not conventional: the ONLY route out of this function
+ * that is not a held token runs through `diagnoseZeroOutput()`. There is no path by which a
+ * zero-output stream reaches the ladder undiagnosed, because there is no zero-output return value
+ * to construct except the one the transport supplies. Removing the barrier removes the only caller
+ * of the diagnosis; removing the diagnosis removes the barrier's only non-token exit. Neither can
+ * be deleted and leave the other doing anything useful — see `admission-barrier.test.ts`.
+ */
+async function admitFirstToken(source: RunStreamResult): Promise<Admission> {
+  const iterator = source.textStream[Symbol.asyncIterator]();
+  for (;;) {
+    const next = await iterator.next();
+    // Terminated with nothing admitted. Which of the two zero-output states this is cannot be
+    // read off the data channel, so it is asked of the transport that owns the other channel.
+    if (next.done) return source.diagnoseZeroOutput();
+    if (next.value.length > 0) {
+      return { kind: "producing", firstToken: next.value, rest: iterator };
+    }
+  }
 }
 
 /**
