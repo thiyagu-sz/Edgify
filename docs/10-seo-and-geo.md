@@ -115,6 +115,32 @@ Two things this table is saying:
   CLS stayed at 0, LCP moved within run-to-run noise, and TBT went slightly down. Both blocks are
   server-rendered with no client component, which is why.
 
+### `/demo` — three defects Lighthouse found, 91 → 100
+
+`/demo` is in the sitemap and indexable, so its accessibility is in scope with the rest. It scored
+**91** while the other public pages scored 100. All three causes were real, and one was a visible
+bug rather than an audit nicety:
+
+1. **The primary call to action was unreadable.** `.edgify-workspace a` has specificity (0,1,1) and
+   `.btn-primary` has (0,1,0), so an ANCHOR carrying a button class lost `color: var(--on-primary)`
+   and inherited `--body` instead: **#374151 text on the #111111 button, a contrast ratio of 1.83**
+   where AA asks 4.5. "Launch workspace" was dark grey on near-black. `<button class="btn-primary">`
+   was never affected, which is why it survived review. Fixed by restating the colour at matching
+   specificity for anchors.
+2. **Two toolbar buttons had no accessible name on mobile.** At ≤ the graph breakpoint,
+   `.gbar-right … span { display: none }` collapses the PDF and DOC exports to icons — which also
+   removed their only text from the accessibility tree, leaving a screen-reader user with "button".
+   The span is now clipped rather than hidden: identical rendering, label intact. Verified at
+   412px — the button still measures 45px and still shows the icon alone, and its accessible name
+   is "PDF".
+3. **A 12.5px toolbar hint failed contrast** at 3.49:1 (`--muted-soft`, #898989 on white). Moved to
+   `--muted` (4.83:1) on that one rule rather than redefining the token, which would have restyled
+   the whole light workspace to fix one label.
+
+**Result: `/demo` accessibility 91 → 100, `button-name` and `color-contrast` both passing, no
+remaining failures.** The visual specification is unchanged — checked by screenshot at both widths,
+not only by the audit score.
+
 ### The LCP finding, and a hypothesis that measurement killed
 
 LCP sits at ~3.95 s under Lighthouse's simulated Slow 4G, which is above the 2.5 s "good"

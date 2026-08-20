@@ -50,6 +50,15 @@ body {
 /* Base rules from the prototype's reset that Tailwind's preflight does not reproduce. Scoped to
    the workspace so the marketing and sign-in pages keep Tailwind's defaults. */
 .edgify-workspace a { color: inherit; text-decoration: none; }
+/* THE RESET ABOVE OUTRANKS THE BUTTON CLASSES, and that was a live defect rather than a nicety.
+   `.edgify-workspace a` is (0,1,1); `.btn-primary` is (0,1,0). So an ANCHOR carrying a button
+   class lost `color: var(--on-primary)` and inherited `--body` instead — rendering the demo's
+   "Launch workspace" call to action as #374151 text on the #111111 button, a contrast ratio of
+   1.83 where WCAG AA asks for 4.5. Effectively invisible, and it only escaped notice because
+   `<button class="btn-primary">` (the common case) was never affected.
+   Restated here at matching specificity so anchors and buttons render identically. */
+.edgify-workspace a.btn-primary { color: var(--on-primary); }
+.edgify-workspace a.btn-secondary { color: var(--ink); }
 .edgify-workspace textarea { font-family: inherit; }
 
 /* Tailwind's preflight sets `line-height: inherit` on form controls; the prototype's button
@@ -295,7 +304,11 @@ textarea.paste::placeholder { color: var(--muted-soft); }
 .graph-card { padding: 6px; overflow: hidden; }
 .graph-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; gap: 12px; }
 .graph-head h2 { font-size: 15px; font-weight: 600; color: var(--ink); letter-spacing: -0.2px; }
-.graph-head .hint { font-size: 12.5px; color: var(--muted-soft); }
+/* `--muted` (#6b7280, 4.83:1 on white), not `--muted-soft` (#898989, 3.49:1) — this text is
+   12.5px, so WCAG AA asks 4.5:1 and the soft grey missed it. Changed HERE rather than in the
+   token, because `--muted-soft` is used across the workspace at larger sizes where it passes,
+   and redefining it would restyle the whole light theme to fix one label. */
+.graph-head .hint { font-size: 12.5px; color: var(--muted); }
 svg.graph { display: block; width: 100%; height: auto; }
 .n-locked .box { fill: var(--surface-card); stroke: var(--hairline); }
 .n-locked .lbl { fill: var(--muted); }
@@ -470,7 +483,17 @@ svg.graph { display: block; width: 100%; height: auto; }
      Notes error state — leaving an empty box at exactly the moment the user is trying to
      recover. The prototype has the same bug; it is only invisible there because that state is
      rarely seen at that width. The visible design is identical either way. */
-  .gbar-right .btn-primary span, .gbar-right .btn-secondary span { display: none; }
+  /* CLIPPED, NOT `display: none`. Hiding the label removed it from the accessibility tree as
+     well as from the screen, and the only other content in these buttons is a decorative icon —
+     so at this width the PDF and DOC exports became buttons with NO ACCESSIBLE NAME, which is
+     what Lighthouse's `button-name` audit failed on for /demo. A screen-reader user heard
+     "button". Clipping keeps the text readable to assistive technology while rendering exactly
+     the icon-only button the prototype specifies: the span leaves the flex flow either way, so
+     the button collapses to the same width and the 7px gap disappears the same way. */
+  .gbar-right .btn-primary span, .gbar-right .btn-secondary span {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .edgify-workspace *, .edgify-workspace *::before, .edgify-workspace *::after {
