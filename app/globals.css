@@ -639,7 +639,11 @@ svg.graph { display: block; width: 100%; height: auto; }
   width: 38px; height: 38px; border-radius: 9999px; background: rgba(96,165,250,.15); color: var(--accent-soft);
   display: grid; place-items: center; font-weight: 600; font-family: var(--mono); margin-bottom: 16px;
 }
-#landing .lx-step h4 { font-size: 18px; font-weight: 600; color: #fff; letter-spacing: -0.01em; }
+/* `h3`, not the prototype's `h4`. The step sits under the section's `<h2>`, so `<h4>` skipped a
+   level — Lighthouse's `heading-order` audit failed on exactly these three elements on every
+   public page. The SIZE is unchanged, so the prototype's visual specification is intact; only
+   the outline a screen reader and an extractor walk is corrected. */
+#landing .lx-step h3 { font-size: 18px; font-weight: 600; color: #fff; letter-spacing: -0.01em; }
 #landing .lx-step p { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin-top: 8px; }
 
 #landing .lx-cta {
@@ -664,6 +668,9 @@ svg.graph { display: block; width: 100%; height: auto; }
   #landing .lx-steps { grid-template-columns: 1fr; }
   #landing .lx-navlinks { display: none; }
   #landing .lx-section { padding: 64px 0; }
+  /* One column: two 14px answers side by side stop being scannable well before this width. */
+  #landing .lx-faq { grid-template-columns: 1fr; }
+  #landing .lx-answer { padding: 26px 24px; margin-top: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   #landing .lx-hero > *, #landing .lx-card { animation: none !important; }
@@ -926,6 +933,52 @@ svg.graph { display: block; width: 100%; height: auto; }
   .legal-body { font-size: 14.5px; }
   .legal-body h2 { margin-top: 30px; font-size: 17.5px; }
   .legal-related { justify-content: flex-start; }
+}
+
+/* --------------------------------------------------------------------------
+   DIRECT ANSWER + FAQ (components/key-answer.tsx, components/faq-section.tsx)
+
+   Two blocks that exist for extraction as much as for reading: the answer panel under the hero,
+   and the always-visible FAQ grid further down. Both render on the landing page and on the two
+   SEO landing pages, so both are built entirely from the vocabulary already defined above --
+   the .gborder hairline, the .lx-mode glass gradient, and the landing's own tokens. No new
+   colour, radius or shadow value is introduced, and every selector is scoped to #landing so
+   app/globals.test.ts stays exactly as strict.
+
+   The FAQ answers are never collapsed. components/faq-section.tsx explains why; the CSS
+   consequence is simply that there is no open/closed state to style.
+   -------------------------------------------------------------------------- */
+
+#landing .lx-answer {
+  border-radius: 24px; padding: 32px 36px; margin-top: 56px;
+  background: linear-gradient(225deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.05) 50%, rgba(255,255,255,0) 100%);
+}
+#landing .lx-answer h2 {
+  font-size: clamp(20px, 2.6vw, 26px); font-weight: 600; letter-spacing: -0.02em; color: #fff;
+}
+/* Wide measure, but capped: an extractable paragraph is still a paragraph a person has to read. */
+#landing .lx-answer p {
+  font-size: 16px; line-height: 1.65; color: var(--body); margin-top: 12px; max-width: 760px;
+}
+
+#landing .lx-faq { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+#landing .lx-faq-item {
+  border-radius: 20px; padding: 26px 28px;
+  background: linear-gradient(225deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.04) 50%, rgba(255,255,255,0) 100%);
+}
+#landing .lx-faq-item h3 {
+  font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: #fff; line-height: 1.35;
+}
+#landing .lx-faq-item p { font-size: 14.5px; line-height: 1.62; color: var(--muted); margin-top: 10px; }
+
+#landing .lx-faq-more {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 14px;
+  font-size: 13.5px; font-weight: 500; color: var(--accent-soft);
+}
+#landing .lx-faq-more:hover { color: #fff; }
+#landing .lx-faq-more svg { width: 14px; height: 14px; }
+#landing .lx-answer :focus-visible, #landing .lx-faq :focus-visible {
+  outline: 2px solid #60a5fa; outline-offset: 3px; border-radius: var(--r-sm);
 }
 
 /* ----------------------------------------------------------------------------

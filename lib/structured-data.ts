@@ -24,6 +24,8 @@
  * directly. Every string is a module constant — no user input, no model output reaches this.
  */
 
+import type { FaqEntry } from "./faq";
+
 export type JsonLd = Record<string, unknown>;
 
 const DESCRIPTION =
@@ -100,10 +102,6 @@ export function landingJsonLd(siteUrl: string): JsonLd {
  * opposite case: it is per-page by definition, it describes a real path a visitor can follow
  * (home → this page, both links that exist), and Google does still render breadcrumbs in results.
  *
- * `FAQPage` is deliberately absent too. Google restricted FAQ rich results to government and
- * health sites in August 2023, so marking up an FAQ now adds a claim with no visible benefit —
- * the same trade `landingJsonLd` refuses for `offers` and `aggregateRating`.
- *
  * `name` and `path` are module constants supplied by the calling page. Nothing user- or
  * model-generated reaches this function.
  */
@@ -134,4 +132,60 @@ export function breadcrumbJsonLd(siteUrl: string, name: string, path: string): J
  */
 export function serialiseJsonLd(data: JsonLd): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
+/**
+ * `FAQPage` for a page that renders a genuine FAQ.
+ *
+ * ── THIS REVERSES AN EARLIER DECISION, DELIBERATELY ─────────────────────────────────────────
+ * The note on `breadcrumbJsonLd` used to record `FAQPage` as refused, on the grounds that Google
+ * restricted FAQ rich results to government and health sites in August 2023, leaving a claim with
+ * no visible benefit. That reasoning was sound for the goal it was written against — earning a
+ * rich result — and it is the wrong test for the goal this markup now serves.
+ *
+ * What changed is the purpose, not the facts. `FAQPage` is a machine-readable statement that a
+ * specific question on this page has a specific answer, which is exactly the shape an answer
+ * engine needs to quote a passage and attribute it. That value does not depend on Google drawing
+ * a dropdown in the results. And the risk that made `offers` and `aggregateRating` bad trades is
+ * absent here: those describe things Edgify does not have, whereas every question and answer
+ * marked up below is rendered, in full, on the page carrying it.
+ *
+ * ── THE ONE RULE THAT MAKES IT SAFE ─────────────────────────────────────────────────────────
+ * Google's policy is that FAQ markup must correspond to content visible on the page. Because the
+ * entries come from `lib/faq.ts`, which is ALSO what `components/faq-section.tsx` and
+ * `components/key-answer.tsx` render, the correspondence is structural rather than a promise
+ * someone has to keep during a copy edit. `lib/faq.test.ts` fails if a page ever marks up an
+ * entry it does not render.
+ *
+ * Answers are plain text by construction (`FaqEntry.answer`), so `acceptedAnswer.text` is the
+ * literal string a reader sees. `FaqEntry.more` — a link rendered beneath the answer — is
+ * deliberately NOT folded into the marked-up text: it is navigation, not part of the answer.
+ */
+export function faqJsonLd(siteUrl: string, path: string, entries: FaqEntry[]): JsonLd {
+  const site = siteUrl.replace(/\/$/, "");
+  const page = `${site}${path.startsWith("/") ? path : `/${path}`}`;
+
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    // Scoped to the page, so three pages carrying three FAQs describe three entities rather than
+    // one entity redefined three times.
+    "@id": `${page}#faq`,
+    mainEntity: entries.map(({ question, answer }) => ({
+      "@type": "Question",
+      name: question,
+      acceptedAnswer: { "@type": "Answer", text: answer },
+    })),
+  };
+}
+
+/**
+ * Serialise several blocks into one `<script type="application/ld+json">`.
+ *
+ * A page may legitimately carry a breadcrumb AND an FAQ. Emitting two script tags is valid, but
+ * one array is the form every validator and consumer handles without ambiguity, and it keeps the
+ * page to a single `dangerouslySetInnerHTML` call site.
+ */
+export function serialiseJsonLdAll(blocks: JsonLd[]): string {
+  return JSON.stringify(blocks).replace(/</g, "\u003c");
 }

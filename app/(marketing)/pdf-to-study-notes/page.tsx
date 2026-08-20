@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowIcon, BrandMark, CheckIcon } from "@/components/brand-mark";
+import { FaqSection } from "@/components/faq-section";
+import { KeyAnswer } from "@/components/key-answer";
 import { SiteFooter } from "@/components/site-footer";
 import { env } from "@/lib/env";
+import { PDF_NOTES_FAQ, splitFaq } from "@/lib/faq";
 import { OG_IMAGES, TWITTER_IMAGES } from "@/lib/seo";
-import { breadcrumbJsonLd, serialiseJsonLd } from "@/lib/structured-data";
+import { breadcrumbJsonLd, faqJsonLd, serialiseJsonLdAll } from "@/lib/structured-data";
 
 /**
  * `/pdf-to-study-notes` — a public SEO landing page for the "PDF to study notes" intent.
@@ -78,6 +81,12 @@ const FORMATS = [
 ] as const;
 
 export default function PdfToStudyNotesPage() {
+  /**
+   * The page's core question is answered directly under the hero; the rest become the FAQ
+   * section. Both halves are rendered, which is what lets the FAQ markup cover all of them.
+   */
+  const { lead, rest } = splitFaq(PDF_NOTES_FAQ);
+
   return (
     <div id="landing">
       {/*
@@ -89,7 +98,12 @@ export default function PdfToStudyNotesPage() {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: serialiseJsonLd(breadcrumbJsonLd(env.SITE_URL, TITLE, "/pdf-to-study-notes")),
+          __html: serialiseJsonLdAll([
+            breadcrumbJsonLd(env.SITE_URL, TITLE, "/pdf-to-study-notes"),
+            // Every marked-up question and answer is rendered on this page: the first as the
+            // answer block under the hero, the rest as the FAQ section (lib/faq.ts `splitFaq`).
+            faqJsonLd(env.SITE_URL, "/pdf-to-study-notes", PDF_NOTES_FAQ),
+          ]),
         }}
       />
       <div className="lx-grid-bg" />
@@ -116,192 +130,24 @@ export default function PdfToStudyNotesPage() {
           </div>
         </nav>
 
-        <header className="lx-hero">
-          <div className="lx-pill" style={{ marginBottom: 22 }}>
-            <span className="tag">Quick Notes</span> From your own material
-          </div>
-          <h1 className="lx-h1">
-            Turn your PDF into <span className="lx-blue">study notes.</span>
-          </h1>
-          <p className="lx-sub">
-            Upload the lecture PDF you were already going to read, and get it back as short,
-            scannable revision notes — grouped, condensed and drawn only from what your document
-            actually says.
-          </p>
-          <div className="lx-hero-cta">
-            <Link href="/sign-up" className="lx-btn-primary">
-              Sign up
-              <ArrowIcon />
-            </Link>
-            <Link className="lx-btn-glass" href="/demo">
-              Try the demo
-              <ArrowIcon />
-            </Link>
-            <a className="lx-btn-glass" href="#how">
-              How it works
-              <ArrowIcon />
-            </a>
-          </div>
-        </header>
-
-        <section className="lx-section" id="how">
-          <div className="lx-shead">
-            <div className="row">
-              <span>How it works</span>
-              <span>(01)</span>
+        {/*
+          `<main>` names the page's primary content, so a screen reader's "skip to main content"
+          and a crawler's extraction both start after the navigation rather than at the top of the
+          document. It wraps the hero through to the closing call to action, and excludes the nav
+          and the footer — site furniture rather than this page's content.
+        */}
+        <main>
+          <header className="lx-hero">
+            <div className="lx-pill" style={{ marginBottom: 22 }}>
+              <span className="tag">Quick Notes</span> From your own material
             </div>
-            <div className="line" />
-            <h2 className="lx-h2">From a PDF to a study guide in three steps</h2>
-          </div>
-          <div className="lx-steps">
-            <div className="lx-step gborder">
-              <div className="n">1</div>
-              <h4>Add your material</h4>
-              <p>
-                Upload a PDF, DOCX, TXT or Markdown file, or paste the text straight into the box.
-                Edgify reads the text out of the file for you.
-              </p>
-            </div>
-            <div className="lx-step gborder">
-              <div className="n">2</div>
-              <h4>Pick a format</h4>
-              <p>
-                Choose how you want it back — key points for a fast pass, formulas and terms for
-                memorising, a summary for a quick recap.
-              </p>
-            </div>
-            <div className="lx-step gborder">
-              <div className="n">3</div>
-              <h4>Revise and export</h4>
-              <p>
-                Notes appear as they are written. Copy them, or take a PDF or Word copy with you.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="lx-section">
-          <div className="lx-shead">
-            <div className="row">
-              <span>Formats</span>
-              <span>(02)</span>
-            </div>
-            <div className="line" />
-            <h2 className="lx-h2">Six ways to get your notes back</h2>
-          </div>
-          <div className="lx-2col">
-            <div className="lx-mode qn gborder">
-              <span className="badge">STUDY FORMATS</span>
-              <h3>Same document, different study guide</h3>
-              <p className="lead">
-                One upload, six ways to read it back. Switch format and regenerate whenever the way
-                you are revising changes.
-              </p>
-              <ul>
-                {FORMATS.map(({ name, desc }) => (
-                  <li key={name}>
-                    <CheckIcon /> <strong>{name}</strong> — {desc}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="lx-mode kg gborder">
-              <span className="badge">WHAT GOES IN</span>
-              <h3>Your material, not a generic summary</h3>
-              <p className="lead">
-                Edgify works from the document you give it. Nothing is pulled in from elsewhere, so
-                the notes stay tied to your syllabus and your lecturer&apos;s emphasis.
-              </p>
-              <ul>
-                <li>
-                  <CheckIcon /> Upload PDF, DOCX, TXT or Markdown
-                </li>
-                <li>
-                  <CheckIcon /> Or paste text directly — no file needed
-                </li>
-                <li>
-                  <CheckIcon /> Export the result to PDF or Word
-                </li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <section className="lx-section">
-          <div className="lx-shead">
-            <div className="row">
-              <span>Why your own material</span>
-              <span>(03)</span>
-            </div>
-            <div className="line" />
-            <h2 className="lx-h2">Notes that match what you are actually examined on</h2>
-          </div>
-          <div className="lx-bento">
-            <div className="lx-card col-4 gborder">
-              <div className="lx-eyebrow">Scoped to your course</div>
-              <h3>Only what your document covers</h3>
-              <p>
-                A general study guide covers the textbook. Your exam covers your module. Working
-                from your own PDF keeps the notes inside the second one.
-              </p>
-            </div>
-            <div className="lx-card col-4 gborder">
-              <div className="lx-eyebrow">Nothing padded</div>
-              <h3>Short on purpose</h3>
-              <p>
-                Every format is written to be revisable in minutes rather than complete. The point
-                is what you can hold before an exam, not word count.
-              </p>
-            </div>
-            <div className="lx-card col-4 gborder">
-              <div className="lx-eyebrow">Yours to keep</div>
-              <div className="lx-exp">
-                <span>PDF</span>
-                <span>DOC</span>
-              </div>
-              <h3>Export anywhere</h3>
-            </div>
-          </div>
-        </section>
-
-        <section className="lx-section">
-          <div className="lx-shead">
-            <div className="row">
-              <span>Good to know</span>
-              <span>(04)</span>
-            </div>
-            <div className="line" />
-            <h2 className="lx-h2">A few honest details</h2>
-          </div>
-          <div className="lx-2col">
-            <div className="lx-mode qn gborder">
-              <h3>What Edgify accepts</h3>
-              <p className="lead">
-                PDF, DOCX, TXT and Markdown files, or text pasted directly. Scanned pages with no
-                text layer, slide decks in PowerPoint format, audio and video are not supported.
-              </p>
-            </div>
-            <div className="lx-mode kg gborder">
-              <h3>Notes are AI-generated</h3>
-              <p className="lead">
-                They are drawn from your document, but they can still get something wrong. Check
-                them against your source before you rely on them — see our{" "}
-                <Link href="/ai-disclaimer">AI disclaimer</Link>.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="lx-section">
-          <div className="lx-cta gborder">
-            <div
-              className="lx-glow"
-              style={{ width: 300, height: 300, background: "rgba(96,165,250,.25)", top: -60, left: "50%", transform: "translateX(-50%)" }}
-            />
-            <h2>Start with the PDF you already have</h2>
-            <p>
-              Bring one lecture and see what comes back. If you would rather look first, the demo
-              runs on prepared material with nothing to set up.
+            <h1 className="lx-h1">
+              Turn your PDF into <span className="lx-blue">study notes.</span>
+            </h1>
+            <p className="lx-sub">
+              Upload the lecture PDF you were already going to read, and get it back as short,
+              scannable revision notes — grouped, condensed and drawn only from what your document
+              actually says.
             </p>
             <div className="lx-hero-cta">
               <Link href="/sign-up" className="lx-btn-primary">
@@ -312,13 +158,199 @@ export default function PdfToStudyNotesPage() {
                 Try the demo
                 <ArrowIcon />
               </Link>
-              <Link className="lx-btn-glass" href="/concept-map-for-studying">
-                Build a concept map
+              <a className="lx-btn-glass" href="#how">
+                How it works
                 <ArrowIcon />
-              </Link>
+              </a>
             </div>
-          </div>
-        </section>
+          </header>
+
+          {/* The page's core question, answered so the paragraph survives being quoted alone. */}
+          <KeyAnswer entry={lead} />
+
+          <section className="lx-section" id="how">
+            <div className="lx-shead">
+              <div className="row">
+                <span>How it works</span>
+                <span>(01)</span>
+              </div>
+              <div className="line" />
+              <h2 className="lx-h2">From a PDF to a study guide in three steps</h2>
+            </div>
+            <div className="lx-steps">
+              <div className="lx-step gborder">
+                <div className="n">1</div>
+                <h3>Add your material</h3>
+                <p>
+                  Upload a PDF, DOCX, TXT or Markdown file, or paste the text straight into the box.
+                  Edgify reads the text out of the file for you.
+                </p>
+              </div>
+              <div className="lx-step gborder">
+                <div className="n">2</div>
+                <h3>Pick a format</h3>
+                <p>
+                  Choose how you want it back — key points for a fast pass, formulas and terms for
+                  memorising, a summary for a quick recap.
+                </p>
+              </div>
+              <div className="lx-step gborder">
+                <div className="n">3</div>
+                <h3>Revise and export</h3>
+                <p>
+                  Notes appear as they are written. Copy them, or take a PDF or Word copy with you.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="lx-section">
+            <div className="lx-shead">
+              <div className="row">
+                <span>Formats</span>
+                <span>(02)</span>
+              </div>
+              <div className="line" />
+              <h2 className="lx-h2">Six ways to get your notes back</h2>
+            </div>
+            <div className="lx-2col">
+              <div className="lx-mode qn gborder">
+                <span className="badge">STUDY FORMATS</span>
+                <h3>Same document, different study guide</h3>
+                <p className="lead">
+                  One upload, six ways to read it back. Switch format and regenerate whenever the way
+                  you are revising changes.
+                </p>
+                <ul>
+                  {FORMATS.map(({ name, desc }) => (
+                    <li key={name}>
+                      <CheckIcon /> <strong>{name}</strong> — {desc}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="lx-mode kg gborder">
+                <span className="badge">WHAT GOES IN</span>
+                <h3>Your material, not a generic summary</h3>
+                <p className="lead">
+                  Edgify works from the document you give it. Nothing is pulled in from elsewhere, so
+                  the notes stay tied to your syllabus and your lecturer&apos;s emphasis.
+                </p>
+                <ul>
+                  <li>
+                    <CheckIcon /> Upload PDF, DOCX, TXT or Markdown
+                  </li>
+                  <li>
+                    <CheckIcon /> Or paste text directly — no file needed
+                  </li>
+                  <li>
+                    <CheckIcon /> Export the result to PDF or Word
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section className="lx-section">
+            <div className="lx-shead">
+              <div className="row">
+                <span>Why your own material</span>
+                <span>(03)</span>
+              </div>
+              <div className="line" />
+              <h2 className="lx-h2">Why work from your own PDF instead of a general study guide?</h2>
+            </div>
+            <div className="lx-bento">
+              <div className="lx-card col-4 gborder">
+                <div className="lx-eyebrow">Scoped to your course</div>
+                <h3>Only what your document covers</h3>
+                <p>
+                  A general study guide covers the textbook. Your exam covers your module. Working
+                  from your own PDF keeps the notes inside the second one.
+                </p>
+              </div>
+              <div className="lx-card col-4 gborder">
+                <div className="lx-eyebrow">Nothing padded</div>
+                <h3>Short on purpose</h3>
+                <p>
+                  Every format is written to be revisable in minutes rather than complete. The point
+                  is what you can hold before an exam, not word count.
+                </p>
+              </div>
+              <div className="lx-card col-4 gborder">
+                <div className="lx-eyebrow">Yours to keep</div>
+                <div className="lx-exp">
+                  <span>PDF</span>
+                  <span>DOC</span>
+                </div>
+                <h3>Export anywhere</h3>
+              </div>
+            </div>
+          </section>
+
+          <section className="lx-section">
+            <div className="lx-shead">
+              <div className="row">
+                <span>Good to know</span>
+                <span>(04)</span>
+              </div>
+              <div className="line" />
+              <h2 className="lx-h2">What should I know before I upload something?</h2>
+            </div>
+            <div className="lx-2col">
+              <div className="lx-mode qn gborder">
+                <h3>What Edgify accepts</h3>
+                <p className="lead">
+                  PDF, DOCX, TXT and Markdown files, or text pasted directly. Scanned pages with no
+                  text layer, slide decks in PowerPoint format, audio and video are not supported.
+                </p>
+              </div>
+              <div className="lx-mode kg gborder">
+                <h3>Notes are AI-generated</h3>
+                <p className="lead">
+                  They are drawn from your document, but they can still get something wrong. Check
+                  them against your source before you rely on them — see our{" "}
+                  <Link href="/ai-disclaimer">AI disclaimer</Link>.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <FaqSection
+            entries={rest}
+            heading="Questions about turning a PDF into notes"
+            eyebrow="FAQ"
+            index="05"
+          />
+
+          <section className="lx-section">
+            <div className="lx-cta gborder">
+              <div
+                className="lx-glow"
+                style={{ width: 300, height: 300, background: "rgba(96,165,250,.25)", top: -60, left: "50%", transform: "translateX(-50%)" }}
+              />
+              <h2>Start with the PDF you already have</h2>
+              <p>
+                Bring one lecture and see what comes back. If you would rather look first, the demo
+                runs on prepared material with nothing to set up.
+              </p>
+              <div className="lx-hero-cta">
+                <Link href="/sign-up" className="lx-btn-primary">
+                  Sign up
+                  <ArrowIcon />
+                </Link>
+                <Link className="lx-btn-glass" href="/demo">
+                  Try the demo
+                  <ArrowIcon />
+                </Link>
+                <Link className="lx-btn-glass" href="/concept-map-for-studying">
+                  Build a concept map
+                  <ArrowIcon />
+                </Link>
+              </div>
+            </div>
+          </section>
+        </main>
 
         <SiteFooter brandMark={<BrandMark />} />
       </div>
